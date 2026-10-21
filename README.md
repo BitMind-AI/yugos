@@ -1,9 +1,9 @@
 # Yugos
 
-Yugos is a Bittensor subnet whose purpose is to produce the best router and
-orchestration model. A router decides which models to call, what to ask them,
-and when to stop. The subnet rewards the router that gets the best answers at
-the lowest cost in the least time.
+Yugos is a Bittensor subnet whose purpose is to produce the best System One
+decision model for inference. For each request, the model chooses the
+inference model, the provider, and the effort. The subnet rewards the
+decision model that gets the best answers at the lowest cost in the least time.
 
 | | |
 | --- | --- |
