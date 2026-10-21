@@ -75,7 +75,7 @@ The service publishes a **world card**: a JSON document containing models, effor
 
 ```sh
 curl --fail --show-error \
-  https://upload.yugos.ai/upload/world/cards/active \
+  https://upload.yugos.ai/world/cards/active \
   --output world-card.json
 cat world-card.json | jq
 ```
@@ -192,7 +192,7 @@ overwritten.
 
 ## Submit
 
-The default network is mainnet, subnet 34, at `https://upload.yugos.ai/upload`.
+The default network is mainnet, subnet 34, at `https://upload.yugos.ai`.
 `--network test` is subnet 169. That network has no built-in service, so pass
 `--endpoint` or set `YUGOS_ENDPOINT`.
 

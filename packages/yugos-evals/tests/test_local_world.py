@@ -25,7 +25,8 @@ RAW = json.loads(CARD.read_text())
 PRICED = {"m": {"input_usd_per_million": 1, "output_usd_per_million": 1}}
 
 
-def test_card_is_cached_by_digest_and_verified_against_its_envelope(tmp_path):
+def test_card_is_cached_by_digest_and_verified_against_its_envelope(tmp_path, monkeypatch):
+    monkeypatch.setenv("YUGOS_ENDPOINT", "https://example.test/upload")
     fetched = []
 
     def fetch(url):
@@ -42,7 +43,7 @@ def test_card_is_cached_by_digest_and_verified_against_its_envelope(tmp_path):
     assert again.sha256 == card.sha256 and len(fetched) == 1
     # Without a source or cached pin, the service's card for that pin is fetched.
     load_world_card(None, pinned=card.sha256, cache_dir=tmp_path / "empty", fetch=fetch)
-    assert fetched[-1].endswith(f"/world/cards/{card.sha256}")
+    assert fetched[-1] == f"https://example.test/world/cards/{card.sha256}"
 
     def forged(url):
         return json.dumps({"sha256": "0" * 64, "card": RAW}).encode()

@@ -7,7 +7,7 @@ docs and assume they are admitted.
 No account is required.
 
 ```sh
-curl -s https://upload.yugos.ai/upload/world/cards/active \
+curl -s https://upload.yugos.ai/world/cards/active \
   | jq -r '.card.providers[] | .provider_id as $p | .token_prices | keys[] | [$p, .] | @tsv'
 ```
 

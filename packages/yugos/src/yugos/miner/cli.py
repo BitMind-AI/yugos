@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from yugos.chain import add_chain_arguments, configured_chain, resolve_subnet
 from yugos.inference.actions import ModelChoice
-from yugos.service_client import ServiceClient, resolve_miner_endpoint
+from yugos.service_client import ServiceClient, resolve_miner_endpoint, service_url
 from yugos.state import canonical_json, save_json, state_lock
 from yugos.submission.bundle import (
     MAX_EXPANDED_BYTES,
@@ -36,11 +36,11 @@ from .display import (
 from .funding import FundingWaitInterrupted, save_status_url
 
 
-def add_miner_endpoint_argument(parser, *, defer_default: bool = False) -> None:
-    """Add a service override, optionally leaving resolution to the command."""
+def add_miner_endpoint_argument(parser) -> None:
+    """Add a service override, leaving endpoint resolution to the command."""
     parser.add_argument(
         "--endpoint",
-        default=None if defer_default else resolve_miner_endpoint(None),
+        default=None,
         help="service URL override (or set YUGOS_ENDPOINT)",
     )
 
@@ -299,6 +299,8 @@ def _upload(
         receipt = (
             json.loads(receipt_path.read_bytes()) if receipt_path.exists() else identity.copy()
         )
+        if "endpoint" in receipt:
+            receipt["endpoint"] = service_url(receipt["endpoint"])
         if any(receipt.get(key) != value for key, value in identity.items()):
             raise ValueError("receipt belongs to another submission, wallet, network, or service")
         if receipt_path.exists():
@@ -430,13 +432,13 @@ def main(argv=None) -> None:
         type=Path,
         help="resume file (defaults to ARCHIVE.receipt.json beside the ZIP; reused on retries)",
     )
-    add_miner_endpoint_argument(send, defer_default=True)
+    add_miner_endpoint_argument(send)
     add_chain_arguments(send)
     status = commands.add_parser(
         "status", help="look up submission status and its private link from a ZIP or receipt"
     )
     status.add_argument("receipt", type=Path, metavar="ZIP_OR_RECEIPT")
-    add_miner_endpoint_argument(status, defer_default=True)
+    add_miner_endpoint_argument(status)
     add_chain_arguments(status)
     cancel = commands.add_parser(
         "cancel-upload", help="abort an incomplete storage upload; retain the ZIP and receipt"
@@ -451,6 +453,7 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     try:
         if args.command == "credits":
+            args.endpoint = resolve_miner_endpoint(args.endpoint)
             run_credit_command(args)
             return
         if args.command == "pack":
@@ -545,10 +548,11 @@ def main(argv=None) -> None:
                     ):
                         raise ValueError("receipt belongs to another wallet or network")
                     service = ServiceClient(receipt["endpoint"], client, chain.wallet.hotkey)
+                    receipt["endpoint"] = service.endpoint
                     if (
                         args.command == "status"
                         and args.endpoint
-                        and service.endpoint != args.endpoint.rstrip("/")
+                        and service.endpoint != service_url(args.endpoint)
                     ):
                         raise ValueError("receipt belongs to another service")
                     if args.command == "cancel-upload":

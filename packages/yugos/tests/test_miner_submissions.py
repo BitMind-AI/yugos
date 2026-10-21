@@ -28,7 +28,7 @@ def attempt(tmp_path):
         "network": "test",
         "netuid": chain.netuid,
         "hotkey": key.ss58_address,
-        "endpoint": "https://evaluation.example/upload",
+        "endpoint": "https://evaluation.example",
         "submission_sha256": metadata.submission_sha256,
         "manifest_sha256": metadata.manifest_sha256,
     }
@@ -70,7 +70,7 @@ def test_lost_receipt_recovers_existing_job_without_upload_or_new_funding(attemp
 
     def respond(request):
         calls.append(request.url.path)
-        assert request.url.path == "/upload/submissions" and request.method == "POST"
+        assert request.url.path == "/submissions" and request.method == "POST"
         verify_signed(request, f.key)
         payload = json.loads(request.content)
         assert payload["expected_hash"] == f.receipt["submission_sha256"]
@@ -105,7 +105,7 @@ def test_lost_receipt_recovers_existing_job_without_upload_or_new_funding(attemp
         result["job_id"] == "existing-job" and result["funding"]["request_id"] == "canonical-intent"
     )
     assert json.loads(f.path.read_text())["confirmed"] is True
-    assert calls == ["/upload/submissions"]
+    assert calls == ["/submissions"]
 
 
 def test_paid_receipt_loss_resumes_verification_and_authorizes_original_intent(attempt):
@@ -142,10 +142,10 @@ def test_paid_receipt_loss_resumes_verification_and_authorizes_original_intent(a
             network="test",
         )
     assert result["job_id"] == "same-paid-job"
-    assert calls == ["/upload/submissions", "/upload/billing/prepare"]
+    assert calls == ["/submissions", "/billing/prepare"]
 
 
-@pytest.mark.parametrize("cache", [False, True, "stale_job"])
+@pytest.mark.parametrize("cache", [False, True, "stale_job", "old_endpoint"])
 @pytest.mark.parametrize("funded", [False, True])
 def test_status_queries_server_for_paid_unready_submission_without_starting_it(
     attempt, monkeypatch, capsys, cache, funded
@@ -156,12 +156,14 @@ def test_status_queries_server_for_paid_unready_submission_without_starting_it(
         cached["funding"] = {"request_id": "canonical-intent", "portal_token": "cached-token"}
         if cache == "stale_job":
             cached.update(job_id="old-job", confirmed=True)
+        if cache == "old_endpoint":
+            cached["endpoint"] += "/upload"
         save_json(f.path, cached)
     calls = []
 
     def respond(request):
         calls.append(request.url.path)
-        assert request.method == "GET" and "/submissions/" in request.url.path
+        assert request.method == "GET" and request.url.path.startswith("/submissions/")
         return httpx.Response(
             200,
             json={
@@ -199,6 +201,7 @@ def test_status_queries_server_for_paid_unready_submission_without_starting_it(
     assert output.count("Private benchmark status and refund link: ") == int(funded)
     assert "cached-token" not in output
     saved = json.loads(f.path.read_text())
+    assert saved["endpoint"] == f.receipt["endpoint"]
     assert ("canonical-intent:" in saved.get("status_url", "")) == funded
     assert not f.chain.commits
     assert len(calls) == 1

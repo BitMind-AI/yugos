@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
-DEFAULT_MINER_ENDPOINT = "https://upload.yugos.ai/upload"
+DEFAULT_MINER_ENDPOINT = "https://upload.yugos.ai"
 
 
 def resolve_miner_endpoint(explicit: str | None, network: str | None = None) -> str:
@@ -25,17 +25,17 @@ def resolve_miner_endpoint(explicit: str | None, network: str | None = None) -> 
     The test network has no built-in service URL.
     """
     if explicit:
-        return explicit
+        return service_url(explicit)
     configured = os.environ.get("YUGOS_ENDPOINT")
     if configured:
-        return configured
+        return service_url(configured)
     if network == "test":
         raise ValueError("pass --endpoint or set YUGOS_ENDPOINT for the test network")
     return DEFAULT_MINER_ENDPOINT
 
 
 def service_url(url: str) -> str:
-    """Require HTTPS, allowing plain HTTP only for a local development service."""
+    """Validate HTTPS and use root routes for URLs saved before the upload cutover."""
     parsed = urlsplit(url)
     local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
     if (
@@ -49,6 +49,8 @@ def service_url(url: str) -> str:
         raise ValueError(
             "service URL must be HTTPS (or localhost HTTP), without credentials or query"
         )
+    if parsed.path.rstrip("/") == "/upload":
+        return parsed._replace(path="").geturl()
     return url.rstrip("/")
 
 
