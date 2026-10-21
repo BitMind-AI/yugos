@@ -1,0 +1,6 @@
+# The installable project metadata lives in the repository root so
+# `uv pip install "yugos @ git+https://github.com/BitMind-AI/yugos.git"` works.
+# This file only configures tests run from this directory.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

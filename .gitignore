@@ -1,0 +1,23 @@
+# Python build and development output
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local secrets and persistent run evidence
+.env
+.env.*
+!.env.example
+var/
+
+# Editor and operating system files
+.DS_Store
+.idea/
+.vscode/

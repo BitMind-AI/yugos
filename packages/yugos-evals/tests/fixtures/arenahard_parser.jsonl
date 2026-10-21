@@ -1,0 +1,9 @@
+{"type": "parser", "text": "[[A>B]]", "label": "A>B", "valid": true, "score": 0.25, "status": "graded"}
+{"type": "parser", "text": "[b>a]", "label": "B>A", "valid": true, "score": 0.75, "status": "graded"}
+{"type": "parser", "text": "[[A>B]] then [[B>A]]", "label": "B>A", "valid": true, "score": 0.75, "status": "graded"}
+{"type": "parser", "text": "[[A>B]] then [B>A]", "label": "A>B", "valid": true, "score": 0.25, "status": "graded"}
+{"type": "parser", "text": "[[AA]] then [B>A]", "label": "AA", "valid": false, "score": 0, "status": "unavailable"}
+{"type": "parser", "text": "no verdict", "label": null, "valid": false, "score": 0, "status": "unavailable"}
+{"type": "parser", "text": "[[A = B]]", "label": null, "valid": false, "score": 0, "status": "unavailable"}
+{"type": "parser", "text": "[[A=B]]\n", "label": "A=B", "valid": true, "score": 0.5, "status": "graded"}
+{"type": "parser", "text": "[[A>B]] [[A=B]]", "label": "A=B", "valid": true, "score": 0.5, "status": "graded"}

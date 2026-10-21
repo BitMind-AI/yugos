@@ -1,0 +1,58 @@
+{
+  "world_state_id": "ws-fixture",
+  "roles": {
+    "frontier": {"provider_id": "openai", "model_id": "gpt-test", "effort": null}
+  },
+  "aliases": {},
+  "providers": [
+    {
+      "provider_id": "openai",
+      "models": [
+        {"model_id": "gpt-test", "effort_levels": [null, "low"]},
+        {"model_id": "gpt-judge", "effort_levels": [null]},
+        {"model_id": "gpt-unreviewed", "effort_levels": [null]}
+      ],
+      "token_prices": {
+        "gpt-test": {
+          "input_usd_per_million": 1.0,
+          "output_usd_per_million": 4.0,
+          "cached_usd_per_million": 0.25,
+          "cache_write_usd_per_million": 1.25
+        },
+        "gpt-judge": {"input_usd_per_million": 0.5, "output_usd_per_million": 2.0},
+        "gpt-unreviewed": {"input_usd_per_million": 0.5, "output_usd_per_million": 2.0}
+      },
+      "model_limits": {
+        "gpt-test": {
+          "max_input_tokens": 100000,
+          "max_output_tokens": 1000,
+          "source": "fixture",
+          "valid_until": "2099-01-01",
+          "input_token_bound": {"tokens_per_byte": 1, "overhead_tokens": 100}
+        },
+        "gpt-judge": {
+          "max_input_tokens": 100000,
+          "max_output_tokens": 1000,
+          "source": "fixture",
+          "valid_until": "2099-01-01",
+          "input_token_bound": {"tokens_per_byte": 1, "overhead_tokens": 100}
+        }
+      }
+    },
+    {
+      "provider_id": "venice",
+      "models": [{"model_id": "open-model", "effort_levels": [null]}],
+      "token_prices": {
+        "open-model": {"input_usd_per_million": 0.1, "output_usd_per_million": 0.2}
+      },
+      "model_limits": {
+        "open-model": {
+          "max_input_tokens": 32000,
+          "max_output_tokens": 4000,
+          "source": "fixture",
+          "valid_until": "2099-01-01"
+        }
+      }
+    }
+  ]
+}

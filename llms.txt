@@ -1,0 +1,126 @@
+# Yugos
+
+> Yugos is a Bittensor subnet that pays for a router. Train a small routing model, package it, and submit it. The hosted service runs it on a shared exam, grades the last model reply, and records spend and time. Validators pay the champions.
+
+An agent that follows this file can install the tools, train a router against public benchmarks, and submit it. Read the linked pages before changing the contract or the score.
+
+## What to train
+
+Train a router, not a foundation model. The artifact is three files:
+
+| File | Role |
+| --- | --- |
+| `model.py` | Defines `load_model(weights_path)`. That returns an object whose `solve(input)` is a generator. |
+| `model.safetensors` | The weights `load_model` reads. |
+| `models.json` | Every `{provider_id, model_id, effort}` the router may yield. No duplicates. A different `effort` is a different choice. |
+
+`solve` yields one call at a time and may read the reply before the next yield:
+
+```python
+reply = yield {
+    "kind": "call",
+    "model": {"provider_id": "...", "model_id": "...", "effort": None},
+    "input": input,
+}
+```
+
+Stop yielding. `reply.text` on the last yield is the answer that gets graded. A call absent from `models.json` scores that question zero. There is no fallback model.
+
+Copy `examples/starter-router`. It calls OpenRouter `openai/gpt-5-nano`. A local run needs `OPENROUTER_API_KEY`. Replace that policy with one you fit.
+
+## The score you are fitting
+
+Contest `competition-v0.0.13` promotes a challenger `A` over champion `K` when every category passes its gates and the paired-bootstrap lower bound of net value is greater than `0.2`.
+
+```text
+m = 100
+k = 300
+V_c = m * anchor_cost_per_question[c]
+T_c = k * anchor_time_per_question[c]
+H = 2
+u_i = H if question i is hard, else 1
+
+NV_c = 100 * Σ_i [ u_i * (g_A,i - g_K,i) - (s_A,i - s_K,i) / V_c - (t_A,i - t_K,i) / T_c ] / n_c
+NV   = 0.40 * NV_chat_qa + 0.35 * NV_math_code + 0.25 * NV_agentic
+```
+
+Grades are in `[0, 1]`. A wrong or missing answer is `0` and still counts its spend and time. A hard question is one the calibration panel did not solve. `NV = +1` is one extra percentage point of that category, after spend and time.
+
+One extra correct answer is worth `100` times the anchor's spend on that question and `300` times the anchor's working time. Matching the anchor's extra spend on every question costs `1` point. Matching its extra time costs about `0.33` points. The goal is a higher `NV` than the current champion: more correct answers, less spend, and less time, across all three categories.
+
+Category totals also have to stay under the safety ceilings: chat/QA `10800` seconds, math/code `12600` seconds, agentic `36000` seconds. Quality has to stay near the category high-water mark. One failed category blocks promotion.
+
+Only champions are paid: current `85%`, previous `10%`, the one before `5%`. A seat that does not exist yet stays with the current champion. Second place in a single match receives nothing. Train to take the crown.
+
+The full expansion, the gates, and the payout are in [docs/scoring.md](docs/scoring.md).
+
+## Models you may call
+
+Fetch the active world card and use its `provider_id` and `model_id` strings. Prices are USD per million tokens under `token_prices`. `card.roles` are grader and simulator models. Leave them out of `models.json`.
+
+```sh
+curl -s https://upload.yugos.ai/upload/world/cards/active \
+  | jq -r '.card.providers[] | .provider_id as $p | .token_prices | keys[] | [$p, .] | @tsv'
+```
+
+Known provider ids: `openai`, `anthropic`, `google`, `openrouter`, `venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, `chutes`. The card is the authority. For a local run, set that provider's key yourself (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `VENICE_API_KEY`, `GM_API_KEY`, `ENGY_API_KEY`, `XAI_API_KEY` for `spacexai`, `NOUS_API_KEY`, `DEEPSEEK_API_KEY`, `CHUTES_API_KEY`). The runner reads the environment. It does not load a `.env` file. The packer skips hidden files, so a `.env` beside `model.py` is not uploaded.
+
+## Procedure
+
+Stay on testnet until one submit succeeds. The default network is mainnet (subnet 34, `https://upload.yugos.ai/upload`). `--network test` is subnet 169 and needs `--endpoint` or `YUGOS_ENDPOINT`.
+
+```sh
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install "yugos @ git+https://github.com/BitMind-AI/yugos.git" \
+  "yugos-evals @ git+https://github.com/BitMind-AI/yugos.git#subdirectory=packages/yugos-evals"
+
+btcli wallet create --wallet miner
+btcli subnet burn-cost --network test 169
+btcli subnet register --network test --wallet miner --hotkey default --netuid 169
+
+git clone --depth 1 https://github.com/BitMind-AI/yugos.git
+cd yugos/examples/starter-router
+```
+
+Then:
+
+1. Fetch the world card. Put the models you call in `models.json`, using ids from that card.
+2. Fit the policy in `model.safetensors` and read it from `load_model`. The goal is the net value above: more correct answers than the champion, for less money, in less time.
+3. Pack and run a small public slice of each category. `yugos-evals list` prints the catalog.
+
+```sh
+yugos pack . --output router.zip
+yugos-evals pack build --benchmark aime2025 --limit 20 --out aime.pack.tar
+yugos-evals run --pack aime.pack.tar --bundle router.zip --log-dir runs/a
+```
+
+`--max-cost` defaults to `100` and caps your own router and grader spend. Repeat for the other categories. Read `runs/a/measurements.json` for grade, spend, and time on each question.
+
+4. Keep the previous ZIP as the baseline. `yugos-evals compare runs/a runs/b` reports whether B beats A on that slice. That local report uses the library's default dollar values and does not apply the contest's anchor time price. Screen with it, then judge a candidate by the formula above on the questions you ran: keep a change when the grade gain is worth the extra spend at `V_c` and the extra time at `T_c`.
+5. Submit the winner on testnet. Confirmation can lock about `$100` and start a paid eval. The receipt is written next to the ZIP. Keep it. Resume an interrupted upload by rerunning the same command.
+
+```sh
+yugos pack . --output router.zip
+yugos submit router.zip --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
+yugos status router.receipt.json --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
+```
+
+`yugos pack` writes `manifest.json` into the ZIP. Leave that file to the packer.
+
+6. After one successful testnet submit, register the same hotkey on mainnet and submit a new receipt. Fund the coldkey with mainnet TAO first. Testnet TAO does not pay the mainnet fee. Do not reuse the testnet receipt.
+
+```sh
+btcli subnet burn-cost 34
+btcli subnet register --wallet miner --hotkey default --netuid 34
+yugos submit router.zip --wallet miner --hotkey default
+yugos status router.receipt.json --wallet miner --hotkey default
+```
+
+## Docs
+
+- [Start mining](docs/miner.md): install, register, pack, and submit.
+- [Scoring and emissions](docs/scoring.md): the full net-value equation, gates, and the 85/10/5 split.
+- [Providers and models](docs/models.md): the world card and the API-key names.
+- [Starter router](examples/starter-router): a working three-file submission.
+- [Local evaluation](packages/yugos-evals/README.md#local-evaluation): pack build, run, compare, and spend caps.

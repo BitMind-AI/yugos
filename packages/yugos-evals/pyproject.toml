@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yugos-evals"
+version = "0.1.0"
+description = "Yugos benchmark catalog, missing Inspect tasks and local evaluation tools"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "yugos[inspect]>=0.2,<0.3",
+    # Same exact pin as yugos[inspect]; frozen recipes record the Inspect Evals release.
+    "inspect-evals==0.22.0",
+    # Source loaders fetch pinned files; math answers are checked with Math-Verify.
+    "httpx>=0.27,<1",
+    "pyarrow>=21,<27",
+    "rpyc==6.0.2",
+    "math-verify[antlr4_13_2]>=0.9,<0.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.12"]
+
+[dependency-groups]
+dev = ["yugos-evals[dev]"]
+
+[project.scripts]
+yugos-evals = "yugos_evals.cli:main"
+
+# Inspect loads this module to resolve `yugos_evals/<task>` registry names.
+[project.entry-points.inspect_ai]
+yugos_evals = "yugos_evals._registry"
+
+# Installed native task construction from prepared data.
+[project.entry-points."yugos.inspect_tasks"]
+"yugos_evals.prepared" = "yugos_evals.prepared:build"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"yugos_evals.scorers" = ["ARENA_HARD_LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

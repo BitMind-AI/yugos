@@ -1,0 +1,66 @@
+# `uv pip install "yugos @ git+https://github.com/BitMind-AI/yugos.git"` installs this project,
+# the core `yugos` package from packages/yugos. Benchmarks are the separate
+# `yugos-evals` package in packages/yugos-evals; the two wheels share no files.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yugos"
+version = "0.2.0"
+description = "Competition rules and evaluation for model routers and orchestrators"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5,<3",
+    # Native request types are part of the miner/worker interface.
+    "inspect-ai==0.3.272",
+    # Miner and validator commands sign hosted calls with bt.http_auth (btauth/1).
+    "bittensor>=11.0.2,<12",
+    "httpx>=0.27,<1",
+    "rich>=13.9,<16",
+    # Pack and the worker runtime both use safetensors weights.
+    "safetensors>=0.5,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.12", "numpy>=1.26"]
+# Inspect evaluation engine. Exact pins: yugos.inspect_engine uses a private Inspect API.
+inspect = ["inspect-evals==0.22.0"]
+# Modal sandbox provider for sandboxed Inspect tasks; install alongside `inspect`.
+# inspect-sandboxes requires Python 3.12+, so it is absent on 3.11.
+inspect-modal = [
+    "inspect-sandboxes==0.6.0; python_version >= '3.12'",
+    "modal==1.6.0; python_version >= '3.12'",
+]
+neuron = ["bittensor>=11.0.2,<12", "httpx>=0.27,<1"]
+
+[project.scripts]
+yugos = "yugos.miner.cli:main"
+yugos-validator = "yugos.validator:main"
+
+[project.entry-points."yugos.inspect_tasks"]
+"yugos.lookup" = "yugos.inspect_engine.controls:build_lookup"
+
+[tool.setuptools.packages.find]
+where = ["packages/yugos/src"]
+
+[tool.uv.workspace]
+members = ["packages/yugos-evals"]
+
+[tool.uv.sources]
+yugos = { workspace = true }
+yugos-evals = { workspace = true }
+
+[dependency-groups]
+dev = ["yugos[dev]", "yugos-evals[dev]"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+# Package source roots, so each workspace package sorts as first-party.
+src = ["packages/*/src"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
