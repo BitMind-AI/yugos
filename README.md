@@ -1,21 +1,28 @@
-# Yugos
+<h1 align="center"><img src="docs/assets/yugos-icon.png" alt="" width="24"> Yugos</h1>
+
+<p align="center">
+  <strong><code>Bittensor SN34</code></strong><br>
+  Better answers. Lower cost. Less time.
+</p>
+
+<p align="center">
+  <a href="https://yugos.ai">Website</a> ·
+  <a href="https://competition.yugos.ai">Dashboard</a> ·
+  <a href="docs/miner.md">Mining</a> ·
+  <a href="docs/validator.md">Validating</a>
+</p>
+
+<p align="center">
+  <a href="docs/models.md">Models</a> ·
+  <a href="docs/scoring.md">Scoring</a> ·
+  <a href="examples/starter-router">Example router</a> ·
+  <a href="llms.txt">Agent guide</a>
+</p>
 
 Yugos is a Bittensor subnet whose purpose is to produce the best System One
 decision model for inference. For each request, the model chooses the
 inference model, the provider, and the effort. The subnet rewards the
 decision model that gets the best answers at the lowest cost in the least time.
-
-| | |
-| --- | --- |
-| Mainnet | subnet **34** on `finney` |
-| Competition | one router, one champion, weights 85% / 10% / 5% |
-
-- **[Mine](docs/miner.md)** — install, register, build a router, and submit.
-- **[Validate](docs/validator.md)** — install, wallet, and the validator command.
-- **[Models](docs/models.md)** — the world card of models a router may call.
-- **[Scoring](docs/scoring.md)** — how a challenger replaces the champion.
-- **[Example router](examples/starter-router)** — a three-file submission to copy.
-- **[Agents](llms.txt)** — one page an agent can follow to start mining.
 
 ## How a round works
 
