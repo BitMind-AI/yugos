@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from yugos.chain import add_chain_arguments, configured_chain, resolve_subnet
 from yugos.inference.actions import ModelChoice
-from yugos.service_client import ServiceClient, resolve_miner_endpoint
+from yugos.service_client import ServiceClient, resolve_miner_endpoint, service_url
 from yugos.state import canonical_json, save_json, state_lock
 from yugos.submission.bundle import (
     MAX_EXPANDED_BYTES,
@@ -299,6 +299,8 @@ def _upload(
         receipt = (
             json.loads(receipt_path.read_bytes()) if receipt_path.exists() else identity.copy()
         )
+        if "endpoint" in receipt:
+            receipt["endpoint"] = service_url(receipt["endpoint"])
         if any(receipt.get(key) != value for key, value in identity.items()):
             raise ValueError("receipt belongs to another submission, wallet, network, or service")
         if receipt_path.exists():
@@ -545,10 +547,11 @@ def main(argv=None) -> None:
                     ):
                         raise ValueError("receipt belongs to another wallet or network")
                     service = ServiceClient(receipt["endpoint"], client, chain.wallet.hotkey)
+                    receipt["endpoint"] = service.endpoint
                     if (
                         args.command == "status"
                         and args.endpoint
-                        and service.endpoint != args.endpoint.rstrip("/")
+                        and service.endpoint != service_url(args.endpoint)
                     ):
                         raise ValueError("receipt belongs to another service")
                     if args.command == "cancel-upload":

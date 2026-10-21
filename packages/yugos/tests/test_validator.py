@@ -191,7 +191,10 @@ def test_snapshot_request_carries_a_valid_btauth_signature(tmp_path):
     verify_signed(request, key)
 
 
-def test_neuron_retries_service_outage_and_persists_a_later_success(tmp_path, monkeypatch):
+@pytest.mark.parametrize("saved_alias", [False, True])
+def test_neuron_retries_service_outage_and_persists_a_later_success(
+    tmp_path, monkeypatch, saved_alias
+):
     key = Keypair.create_from_uri("//Alice")
     chain = ValidatorChain()
     chain.wallet.hotkey = key
@@ -229,6 +232,20 @@ def test_neuron_retries_service_outage_and_persists_a_later_success(tmp_path, mo
         fromisoformat = datetime.fromisoformat
 
     monkeypatch.setattr(validator, "datetime", Clock)
+    state_path = tmp_path / "state.json"
+    if saved_alias:
+        state_path.write_text(
+            json.dumps(
+                {
+                    "scope": {
+                        "network": "test",
+                        "netuid": NETUID,
+                        "endpoint": "https://evaluation.example/upload",
+                        "hotkey": key.ss58_address,
+                    }
+                }
+            )
+        )
     validator.main(
         [
             "--network",
@@ -240,12 +257,14 @@ def test_neuron_retries_service_outage_and_persists_a_later_success(tmp_path, mo
             "--endpoint",
             "https://evaluation.example",
             "--state",
-            str(tmp_path / "state.json"),
+            str(state_path),
         ]
     )
     assert len(requests) == 2 and len(chain.published) == 1
     for request in requests:
+        assert request.url.path == "/scoring/snapshots/latest"
         verify_signed(request, key)
+    assert json.loads(state_path.read_text())["scope"]["endpoint"] == "https://evaluation.example"
     assert (
         json.loads((tmp_path / "state.json").read_bytes())["published_snapshot"] == snapshot()["id"]
     )

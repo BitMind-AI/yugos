@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from yugos.chain import add_wallet_arguments, configured_wallet
-from yugos.service_client import ServiceClient
+from yugos.service_client import ServiceClient, service_url
 from yugos.state import save_json, state_lock
 
 
@@ -106,6 +106,8 @@ def refund(service: ServiceClient, amount_cents: int, receipt_path: Path) -> dic
     with state_lock(receipt_path):
         if receipt_path.exists():
             receipt = json.loads(receipt_path.read_bytes())
+            if "endpoint" in receipt:
+                receipt["endpoint"] = service_url(receipt["endpoint"])
             if any(receipt.get(key) != value for key, value in identity.items()):
                 raise ValueError("refund receipt belongs to another amount, wallet, or service")
             if not isinstance(receipt.get("request_id"), str) or not receipt["request_id"]:

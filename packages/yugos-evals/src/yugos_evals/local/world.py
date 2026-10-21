@@ -146,7 +146,7 @@ def default_cache_dir() -> Path:
 
 def default_card_url(sha256: str | None) -> str:
     endpoint = os.environ.get("YUGOS_ENDPOINT") or DEFAULT_MINER_ENDPOINT
-    return f"{endpoint.rstrip('/')}/world/cards/{sha256 or 'active'}"
+    return f"{service_url(endpoint)}/world/cards/{sha256 or 'active'}"
 
 
 def fetch_url(url: str) -> bytes:

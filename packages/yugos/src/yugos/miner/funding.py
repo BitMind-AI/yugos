@@ -7,7 +7,7 @@ import time
 import webbrowser
 from uuid import uuid4
 
-from yugos.service_client import ServiceError
+from yugos.service_client import ServiceError, service_url
 from yugos.state import save_json
 
 from .display import (
@@ -52,7 +52,7 @@ def receipt_status_url(receipt):
     if not funding:
         return None
     return (
-        receipt["endpoint"].rstrip("/")
+        service_url(receipt["endpoint"])
         + "/billing/portal#"
         + funding["request_id"]
         + ":"
@@ -66,6 +66,7 @@ def save_status_url(receipt, receipt_path):
     if url is None:
         return None
     if receipt.get("status_url") != url:
+        receipt["endpoint"] = service_url(receipt["endpoint"])
         receipt["status_url"] = url
         save_json(receipt_path, receipt)
     return url

@@ -6,7 +6,7 @@ It does not download miner code, call providers, or regrade answers.
 
 | Network | Flag | Subnet | Service |
 | --- | --- | --- | --- |
-| Mainnet | omitted (`finney`) | **34** | `https://upload.yugos.ai/upload` |
+| Mainnet | omitted (`finney`) | **34** | `https://upload.yugos.ai` |
 | Testnet | `--network test` | **169** | pass `--endpoint` |
 
 Weights are 85% for the current champion, 10% for the previous champion, and
@@ -23,7 +23,7 @@ weights.
 - A persistent disk for the state file. The state file is locked; two
   processes cannot share it.
 - The results endpoint. Mainnet results are served at
-  `https://upload.yugos.ai/upload`.
+  `https://upload.yugos.ai`.
 
 No provider API keys. No benchmark data on the validator machine.
 

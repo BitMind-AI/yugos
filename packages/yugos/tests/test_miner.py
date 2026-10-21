@@ -222,7 +222,7 @@ def test_funding_is_ready_before_upload_and_reused_for_final_authorization(
         return httpx.Response(200, json={"state": "started", "job_id": "funded-job"})
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        service = ServiceClient("https://evaluation.example/upload", client, key)
+        service = ServiceClient("https://evaluation.example", client, key)
         if interruption == "register":
             with pytest.raises(httpx.ReadTimeout):
                 submit(archive, receipt_path, service, chain, network="test")
@@ -245,7 +245,7 @@ def funding_submission(tmp_path):
         "network": "test",
         "netuid": chain.netuid,
         "hotkey": key.ss58_address,
-        "endpoint": "https://evaluation.example/upload",
+        "endpoint": "https://evaluation.example",
         "submission_sha256": metadata.submission_sha256,
         "manifest_sha256": metadata.manifest_sha256,
         "model_id": 3,
@@ -298,20 +298,24 @@ def test_renew_funding_replaces_terminal_intent_without_reupload(funding_submiss
         assert json.loads(path.read_text()) == result
         assert submit(archive, path, service, chain, network="test", renew_funding=True) == result
     assert requests == [
-        "/upload/billing/intents/old-request/cancel",
-        "/upload/confirm",
-        "/upload/billing/prepare",
+        "/billing/intents/old-request/cancel",
+        "/confirm",
+        "/billing/prepare",
     ]
     assert len(chain.commits) == 1
 
 
 @pytest.mark.parametrize("job_id", [123, "job/123"])
+@pytest.mark.parametrize("saved_alias", [False, True])
 def test_renew_funding_preserves_started_job_as_status_compatible_string(
-    funding_submission, job_id
+    funding_submission, job_id, saved_alias
 ):
     from urllib.parse import quote
 
     archive, path, chain, previous = funding_submission
+    if saved_alias:
+        previous["endpoint"] += "/upload"
+        save_json(path, previous)
     requests = []
 
     def respond(request):
@@ -325,6 +329,7 @@ def test_renew_funding_preserves_started_job_as_status_compatible_string(
         service = ServiceClient(previous["endpoint"], client, chain.wallet.hotkey)
         result = submit(archive, path, service, chain, network="test", renew_funding=True)
         saved = json.loads(path.read_text())
+        assert saved["endpoint"] == service.endpoint
         assert saved["job_id"] == str(job_id)
         assert quote(saved["job_id"], safe="") == str(job_id).replace("/", "%2F")
         assert saved["funding"] == previous["funding"]
@@ -358,7 +363,7 @@ def test_hosted_upload_recovers_confirmation_without_chain_or_reupload(tmp_path)
     server = UploadService(key, archive, fail="confirm")
     path = tmp_path / "hosted.json"
     with httpx.Client(transport=httpx.MockTransport(server)) as client:
-        service = ServiceClient("https://evaluation.example/upload", client, key)
+        service = ServiceClient("https://evaluation.example", client, key)
         with pytest.raises(httpx.ReadTimeout):
             upload(archive, path, service, coldkey="cold")
         receipt = upload(archive, path, service, coldkey="cold")
@@ -380,7 +385,7 @@ def test_resume_does_not_reupload_or_create_a_second_job(tmp_path, failure):
     chain = MinerChain(key, fail=failure == "commit")
     receipt_path = tmp_path / "receipt.json"
     with httpx.Client(transport=httpx.MockTransport(server)) as client:
-        service = ServiceClient("https://evaluation.example/upload", client, key)
+        service = ServiceClient("https://evaluation.example", client, key)
         with pytest.raises((RuntimeError, httpx.ReadTimeout)):
             submit(archive, receipt_path, service, chain, network="test")
         receipt = submit(archive, receipt_path, service, chain, network="test")
@@ -400,7 +405,7 @@ def test_submit_prints_each_stage_including_chain_finalization(tmp_path, capsys)
     key = Keypair.create_from_uri("//Alice")
     chain = MinerChain(key)
     with httpx.Client(transport=httpx.MockTransport(UploadService(key, archive))) as client:
-        service = ServiceClient("https://evaluation.example/upload", client, key)
+        service = ServiceClient("https://evaluation.example", client, key)
         submit(archive, tmp_path / "receipt.json", service, chain, network="test")
     output = capsys.readouterr().out
     assert "Checking hotkey registration." in output
@@ -676,7 +681,7 @@ def test_package_does_not_overwrite_destination_created_during_validation(tmp_pa
 
 
 @pytest.mark.parametrize("custom_receipt", [False, True])
-@pytest.mark.parametrize("endpoint", [None, "https://evaluation.example/upload"])
+@pytest.mark.parametrize("endpoint", [None, "https://evaluation.example"])
 def test_submit_cli_reuses_receipt_after_lost_confirmation(
     tmp_path, monkeypatch, custom_receipt, endpoint
 ):
@@ -685,7 +690,7 @@ def test_submit_cli_reuses_receipt_after_lost_confirmation(
 
     monkeypatch.delenv("YUGOS_ENDPOINT", raising=False)
     if endpoint is None:
-        endpoint = "https://evaluation.example/upload"
+        endpoint = "https://evaluation.example"
         monkeypatch.setenv("YUGOS_ENDPOINT", endpoint)
     archive, digest, _ = make_bundle(tmp_path)
     key = Keypair.create_from_uri("//Alice")
@@ -846,7 +851,7 @@ def test_missing_wallet_does_not_create_or_announce_a_receipt(tmp_path, monkeypa
                 "--network",
                 "test",
                 "--endpoint",
-                "https://evaluation.example/upload",
+                "https://evaluation.example",
                 "--wallet",
                 "missing",
                 "--hotkey",
@@ -960,7 +965,7 @@ def test_cancel_upload_keeps_receipt_until_storage_acknowledges_abort(
         if request.url.path.endswith("/submissions"):
             return cached_submission(path)
         requests.append(request)
-        assert request.url.path == "/upload/multipart/abort"
+        assert request.url.path == "/multipart/abort"
         assert json.loads(request.read()) == {"model_id": 3, "upload_id": "session"}
         return httpx.Response(200, json={"ok": acknowledged, "aborted": acknowledged})
 

@@ -40,7 +40,7 @@ def test_checkout_cli_unsigned_amount_and_handles_headless_browser(monkeypatch, 
 
     def handler(request):
         requests.append(request)
-        assert request.method == "POST" and request.url.path == "/upload/credits/checkout"
+        assert request.method == "POST" and request.url.path == "/credits/checkout"
         assert_unsigned(request.headers)
         assert json.loads(request.read()) == {"amount_cents": 1029, "hotkey": key.ss58_address}
         return httpx.Response(200, json={"id": "cs_test", "url": url})
@@ -65,7 +65,7 @@ def test_checkout_cli_unsigned_amount_and_handles_headless_browser(monkeypatch, 
             "--amount-usd",
             "10.29",
             "--endpoint",
-            "https://service.example/upload",
+            "https://service.example",
             "--to-hotkey",
             key.ss58_address,
             *(["--no-browser"] if no_browser else []),
@@ -108,7 +108,8 @@ def test_read_commands_sign_empty_body_without_chain(monkeypatch, capsys, operat
     assert json.loads(capsys.readouterr().out)["balance_cents"] == 42
 
 
-def test_refund_lost_response_reuses_persisted_identity(tmp_path):
+@pytest.mark.parametrize("saved_alias", [False, True])
+def test_refund_lost_response_reuses_persisted_identity(tmp_path, saved_alias):
     key = Keypair.create_from_uri("//Alice")
     path = tmp_path / "refund.json"
     attempts = []
@@ -133,7 +134,12 @@ def test_refund_lost_response_reuses_persisted_identity(tmp_path):
         service = ServiceClient("https://service.example", client, key)
         with pytest.raises(httpx.ReadTimeout):
             refund(service, 125, path)
+        if saved_alias:
+            receipt = json.loads(path.read_text())
+            receipt["endpoint"] += "/upload"
+            path.write_text(json.dumps(receipt))
         result = refund(service, 125, path)
+        assert result["endpoint"] == service.endpoint
         assert refund(service, 125, path) == result
         for other, amount in [
             (service, 126),
@@ -194,10 +200,10 @@ def test_checkout_wallet_uses_only_public_hotkey(monkeypatch):
     assert seen == [{"hotkey": "public-destination", "open_browser": False}]
 
 
-@pytest.mark.parametrize("override", [None, "https://other.example/upload"])
+@pytest.mark.parametrize("override", [None, "https://other.example"])
 def test_checkout_uses_configured_default_and_explicit_override(monkeypatch, override):
     seen = []
-    monkeypatch.setenv("YUGOS_ENDPOINT", "https://configured.example/upload")
+    monkeypatch.setenv("YUGOS_ENDPOINT", "https://configured.example")
     monkeypatch.setattr(
         miner_credits, "checkout", lambda service, amount, **kw: seen.append(service.endpoint)
     )
@@ -205,7 +211,7 @@ def test_checkout_uses_configured_default_and_explicit_override(monkeypatch, ove
     if override:
         args += ["--endpoint", override]
     main(args)
-    assert seen == [override or "https://configured.example/upload"]
+    assert seen == [override or "https://configured.example"]
 
 
 def test_miner_endpoint_defaults_to_public_service(monkeypatch):

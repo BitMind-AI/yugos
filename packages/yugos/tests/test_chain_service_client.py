@@ -89,19 +89,15 @@ def test_network_defaults_to_mainnet_and_test_needs_an_endpoint(monkeypatch):
     with pytest.raises(ValueError, match="test network"):
         resolve_miner_endpoint(None, "test")
     assert resolve_miner_endpoint(None, "finney") == DEFAULT_MINER_ENDPOINT
-    assert resolve_miner_endpoint("https://other.example/upload", "test") == (
-        "https://other.example/upload"
-    )
+    assert resolve_miner_endpoint("https://other.example", "test") == ("https://other.example")
 
 
 def test_submit_endpoint_uses_public_default_and_explicit_override_precedence(monkeypatch):
     monkeypatch.delenv("YUGOS_ENDPOINT", raising=False)
     assert resolve_miner_endpoint(None) == DEFAULT_MINER_ENDPOINT
-    monkeypatch.setenv("YUGOS_ENDPOINT", "https://configured.example/upload")
-    assert resolve_miner_endpoint(None) == "https://configured.example/upload"
-    assert resolve_miner_endpoint("https://other.example/upload") == (
-        "https://other.example/upload"
-    )
+    monkeypatch.setenv("YUGOS_ENDPOINT", "https://configured.example")
+    assert resolve_miner_endpoint(None) == "https://configured.example"
+    assert resolve_miner_endpoint("https://other.example") == ("https://other.example")
 
 
 @pytest.mark.parametrize(
@@ -116,6 +112,27 @@ def test_submit_endpoint_uses_public_default_and_explicit_override_precedence(mo
 def test_untrusted_transport_configuration_is_rejected(url):
     with pytest.raises(ValueError):
         service_url(url)
+
+
+@pytest.mark.parametrize(
+    "base,prefix",
+    [("https://evaluation.example/upload/", ""), ("https://evaluation.example/tenant", "/tenant")],
+)
+def test_service_base_is_canonical_before_signing_encoded_requests(base, prefix):
+    # A stale prefix in either the request or its signature breaks the canonical routes.
+    key = Keypair.create_from_uri("//Alice")
+    path = "/credits/%68istory?limit=1&probe=a%2Fb&probe=c+d"
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        assert request.url.raw_path == (prefix + path).encode()
+        verify_signed(request, key)
+        return httpx.Response(200, json={"ok": True})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        result = ServiceClient(base, client, key).request("GET", path, signed=True)
+    assert result == {"ok": True} and len(calls) == 1
 
 
 def test_redirects_and_oversized_results_are_rejected(monkeypatch):
@@ -156,7 +173,7 @@ def test_delayed_completion_polls_the_same_result_without_replaying_signed_post(
         return httpx.Response(200, json={"uploaded": True, "model_id": 1})
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        service = ServiceClient("https://evaluation.example/upload", client, key)
+        service = ServiceClient("https://evaluation.example", client, key)
         result = service.request(
             "POST", "/multipart/complete", {"model_id": 1, "upload_id": "session"}, signed=True
         )
@@ -186,7 +203,7 @@ def test_expired_signature_is_refreshed_and_result_polling_remains_unsigned():
         return httpx.Response(200, json={"uploaded": True})
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        result = ServiceClient("https://evaluation.example/upload", client, key).request(
+        result = ServiceClient("https://evaluation.example", client, key).request(
             "POST", "/multipart/complete", payload, signed=True
         )
     assert result == {"uploaded": True} and len(calls) == 3
@@ -212,7 +229,7 @@ def test_authentication_retries_are_bounded_and_only_refresh_expired_signatures(
     key = Keypair.create_from_uri("//Alice")
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(ServiceError) as error:
-            ServiceClient("https://evaluation.example/upload", client, key).request(
+            ServiceClient("https://evaluation.example", client, key).request(
                 "POST", "/multipart/part", {"part_number": 2}, signed=signed
             )
     assert error.value.status == 401
@@ -222,8 +239,8 @@ def test_authentication_retries_are_bounded_and_only_refresh_expired_signatures(
 @pytest.mark.parametrize(
     "location",
     [
-        "https://other.example/upload/multipart/complete?result=token",
-        "http://evaluation.example/upload/multipart/complete?result=token",
+        "https://other.example/multipart/complete?result=token",
+        "http://evaluation.example/multipart/complete?result=token",
         "/different-operation?result=token",
     ],
 )
@@ -235,7 +252,7 @@ def test_delayed_results_cannot_redirect_to_another_origin_or_operation(location
         return httpx.Response(303, headers={"Location": location})
 
     with httpx.Client(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
-        service = ServiceClient("https://evaluation.example/upload", client)
+        service = ServiceClient("https://evaluation.example", client)
         with pytest.raises(ValueError, match="unsafe result redirect"):
             service.request("POST", "/multipart/complete", {})
     assert len(calls) == 1

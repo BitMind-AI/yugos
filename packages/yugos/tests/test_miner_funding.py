@@ -9,7 +9,7 @@ from yugos.service_client import ServiceError
 
 
 class Service:
-    endpoint = "https://example.test/upload"
+    endpoint = "https://example.test"
 
     def __init__(self):
         self.calls = []
@@ -63,7 +63,7 @@ def test_private_status_url_is_saved_before_prepare_can_fail(tmp_path):
         def request(self, method, route, payload, *, signed):
             saved = json.loads(path.read_text())
             assert saved["status_url"] == (
-                "https://example.test/upload/billing/portal#"
+                "https://example.test/billing/portal#"
                 f"{payload['request_id']}:{payload['portal_token']}"
             )
             assert "status_url" not in payload
@@ -83,7 +83,7 @@ def test_receipt_page_is_not_announced_until_registration_is_acknowledged(
     from yugos.state import save_json
 
     receipt = {
-        "endpoint": "https://example.test/upload",
+        "endpoint": "https://example.test",
         "model_id": 12,
         "submission_sha256": "a" * 64,
         "network": "test",
@@ -122,7 +122,7 @@ def test_payment_wait_reports_progress_until_the_job_starts(tmp_path, monkeypatc
     monkeypatch.setattr("yugos.miner.funding.webbrowser.open", lambda _: True)
 
     class Waiting:
-        endpoint = "https://example.test/upload"
+        endpoint = "https://example.test"
 
         def __init__(self):
             self.resumes = 0
@@ -244,7 +244,7 @@ def test_paid_status_and_job_are_observable_while_resume_request_is_blocked(tmp_
     started, release = threading.Event(), threading.Event()
 
     class Preparing:
-        endpoint = "https://example.test/upload"
+        endpoint = "https://example.test"
 
         def request(self, method, path, payload, *, signed):
             if path == "/billing/prepare":

@@ -59,7 +59,7 @@ The full expansion, the gates, and the payout are in [docs/scoring.md](docs/scor
 Fetch the active world card and use its `provider_id` and `model_id` strings. Prices are USD per million tokens under `token_prices`. `card.roles` are grader and simulator models. Leave them out of `models.json`.
 
 ```sh
-curl -s https://upload.yugos.ai/upload/world/cards/active \
+curl -s https://upload.yugos.ai/world/cards/active \
   | jq -r '.card.providers[] | .provider_id as $p | .token_prices | keys[] | [$p, .] | @tsv'
 ```
 
@@ -67,7 +67,7 @@ Known provider ids: `openai`, `anthropic`, `google`, `openrouter`, `venice`, `gm
 
 ## Procedure
 
-Stay on testnet until one submit succeeds. The default network is mainnet (subnet 34, `https://upload.yugos.ai/upload`). `--network test` is subnet 169 and needs `--endpoint` or `YUGOS_ENDPOINT`.
+Stay on testnet until one submit succeeds. The default network is mainnet (subnet 34, `https://upload.yugos.ai`). `--network test` is subnet 169 and needs `--endpoint` or `YUGOS_ENDPOINT`.
 
 ```sh
 uv venv --python 3.12

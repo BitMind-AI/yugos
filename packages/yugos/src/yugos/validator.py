@@ -16,7 +16,7 @@ import httpx
 
 from yugos.chain import add_chain_arguments, configured_chain, resolve_subnet
 from yugos.competition import COMPETITION_VERSION, digest, king_weights
-from yugos.service_client import ServiceClient, resolve_miner_endpoint
+from yugos.service_client import ServiceClient, resolve_miner_endpoint, service_url
 from yugos.state import save_json, state_lock
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,8 @@ def main(argv=None) -> None:
             state = json.loads(args.state.read_bytes()) if args.state.exists() else {}
             # Older state files also pinned a cohort; it no longer matters.
             saved = {k: v for k, v in state.get("scope", scope).items() if k != "cohort"}
+            if "endpoint" in saved:
+                saved["endpoint"] = service_url(saved["endpoint"])
             if saved != scope:
                 raise ValueError("state belongs to another validator or service")
             state["scope"] = scope
