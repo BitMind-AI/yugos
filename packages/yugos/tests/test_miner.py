@@ -544,11 +544,12 @@ def test_packager_rejects_invalid_dependencies_without_replacing_output(tmp_path
 
 @pytest.mark.parametrize("entrypoint", ["public", "module"])
 def test_installed_pack_cli_generates_manifest_without_research_or_hosting_dependencies(
-    tmp_path, entrypoint
+    tmp_path, monkeypatch, entrypoint
 ):
     import subprocess
     import sys
 
+    monkeypatch.setenv("YUGOS_ENDPOINT", "http://invalid.example")
     source = tmp_path / "source"
     source.mkdir()
     (source / "model.py").write_text("raise RuntimeError('must not import')")

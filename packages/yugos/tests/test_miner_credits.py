@@ -12,7 +12,7 @@ from btauth import assert_unsigned, verify_signed
 from yugos.miner import credits as miner_credits
 from yugos.miner import main
 from yugos.miner.credits import checkout, refund, usd_cents
-from yugos.service_client import ServiceClient
+from yugos.service_client import DEFAULT_MINER_ENDPOINT, ServiceClient
 
 
 def verify(request, key):
@@ -81,6 +81,7 @@ def test_checkout_cli_unsigned_amount_and_handles_headless_browser(monkeypatch, 
     "operation,path", [("balance", "/credits"), ("history", "/credits/history")]
 )
 def test_read_commands_sign_empty_body_without_chain(monkeypatch, capsys, operation, path):
+    monkeypatch.setenv("YUGOS_ENDPOINT", "http://invalid.example")
     key = Keypair.create_from_uri("//Alice")
 
     def handler(request):
@@ -200,10 +201,21 @@ def test_checkout_wallet_uses_only_public_hotkey(monkeypatch):
     assert seen == [{"hotkey": "public-destination", "open_browser": False}]
 
 
-@pytest.mark.parametrize("override", [None, "https://other.example"])
-def test_checkout_uses_configured_default_and_explicit_override(monkeypatch, override):
+@pytest.mark.parametrize(
+    "configured,override",
+    [
+        (None, None),
+        ("https://configured.example", None),
+        ("https://configured.example", "https://other.example"),
+        ("http://invalid.example", "https://other.example"),
+    ],
+)
+def test_checkout_uses_configured_default_and_explicit_override(monkeypatch, configured, override):
     seen = []
-    monkeypatch.setenv("YUGOS_ENDPOINT", "https://configured.example")
+    if configured is None:
+        monkeypatch.delenv("YUGOS_ENDPOINT", raising=False)
+    else:
+        monkeypatch.setenv("YUGOS_ENDPOINT", configured)
     monkeypatch.setattr(
         miner_credits, "checkout", lambda service, amount, **kw: seen.append(service.endpoint)
     )
@@ -211,17 +223,7 @@ def test_checkout_uses_configured_default_and_explicit_override(monkeypatch, ove
     if override:
         args += ["--endpoint", override]
     main(args)
-    assert seen == [override or "https://configured.example"]
-
-
-def test_miner_endpoint_defaults_to_public_service(monkeypatch):
-    from yugos.miner.cli import add_miner_endpoint_argument
-    from yugos.service_client import DEFAULT_MINER_ENDPOINT
-
-    monkeypatch.delenv("YUGOS_ENDPOINT", raising=False)
-    parser = argparse.ArgumentParser()
-    add_miner_endpoint_argument(parser)
-    assert parser.parse_args([]).endpoint == DEFAULT_MINER_ENDPOINT
+    assert seen == [override or configured or DEFAULT_MINER_ENDPOINT]
 
 
 @pytest.mark.parametrize(
