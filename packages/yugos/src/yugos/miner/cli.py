@@ -1,4 +1,4 @@
-"""Package a learned submission and send it to the hosted evaluation service."""
+"""Package and submit models, manage evaluation credits, and start a validator."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 import zipfile
 from datetime import UTC, datetime
@@ -407,9 +408,18 @@ def _upload(
 
 
 def main(argv=None) -> None:
-    """Expose packaging, resumable submission, and evaluation-job status commands."""
+    """Expose miner operations and validator process startup."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    validator = commands.add_parser("validator", aliases=["v"], help="manage the validator")
+    validator_commands = validator.add_subparsers(dest="validator_command", required=True)
+    start = validator_commands.add_parser("start", help="start the validator with PM2")
+    start.add_argument(
+        "--config",
+        type=Path,
+        default=Path("validator.config.js"),
+        help="PM2 config (defaults to validator.config.js in the current directory)",
+    )
     pack = commands.add_parser("pack", help="bundle a model directory and its local assets")
     pack.add_argument("source", type=Path)
     pack.add_argument(
@@ -452,6 +462,19 @@ def main(argv=None) -> None:
     add_credit_commands(commands, endpoint_options=credit_options)
     args = parser.parse_args(argv)
     try:
+        if args.command in {"validator", "v"}:
+            config = args.config.expanduser().resolve()
+            if not config.is_file():
+                raise ValueError(
+                    f"PM2 config not found: {config}. Run from the checkout or pass --config."
+                )
+            try:
+                result = subprocess.run(["pm2", "start", str(config)], check=False)
+            except FileNotFoundError:
+                raise ValueError("PM2 is not installed or is missing from PATH.") from None
+            if result.returncode:
+                parser.exit(result.returncode)
+            return
         if args.command == "credits":
             args.endpoint = resolve_miner_endpoint(args.endpoint)
             run_credit_command(args)

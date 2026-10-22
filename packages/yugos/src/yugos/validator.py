@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import signal
 import threading
 from datetime import datetime, timezone
@@ -16,12 +17,21 @@ import httpx
 
 from yugos.chain import add_chain_arguments, configured_chain, resolve_subnet
 from yugos.competition import COMPETITION_VERSION, digest, king_weights
-from yugos.service_client import ServiceClient, resolve_miner_endpoint, service_url
+from yugos.service_client import ServiceClient, ServiceError, resolve_miner_endpoint, service_url
 from yugos.state import save_json, state_lock
 
 logger = logging.getLogger(__name__)
 # Validators follow every competition of this major version; a major bump needs an upgrade.
 COMPETITION_MAJOR = COMPETITION_VERSION.split(".")[0]
+SNAPSHOT_ATTEMPTS = 10
+
+
+def default_state_path(scope: dict) -> Path:
+    """Keep each validator identity's progress in the user's persistent state directory."""
+    root = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    if not root.is_absolute():
+        root = Path.home() / ".local" / "state"
+    return root / "yugos" / "validators" / f"{digest(scope)}.json"
 
 
 def read_result(raw: dict, *, netuid: int, now: datetime, max_age_s: float):
@@ -54,6 +64,15 @@ def read_result(raw: dict, *, netuid: int, now: datetime, max_age_s: float):
     return confirmed_at, weights, kings[-1] if kings else None
 
 
+def weight_schedule(chain, state: dict, minimum_interval: int) -> tuple[int, int, int]:
+    """Return the current block, next eligible block, and effective weight interval."""
+    graph = chain.metagraph()
+    neuron = chain.registered(graph, validator=True)
+    interval = max(minimum_interval, chain.check_weight_settings())
+    last = max(neuron.last_update, state.get("last_success_block", 0))
+    return graph.block, last + interval if last else graph.block, interval
+
+
 def validator_step(
     service: ServiceClient,
     chain,
@@ -65,22 +84,52 @@ def validator_step(
     version_key: int,
     dry_run: bool = False,
     now: datetime | None = None,
+    stop: threading.Event | None = None,
 ) -> str:
-    """Validate a fresh result, refresh miner identities, and publish when due."""
-    current_time = now or datetime.now(timezone.utc)
-    raw = service.request(
-        "GET",
-        "/scoring/snapshots/latest?" + urlencode({"netuid": chain.netuid}),
-        signed=True,
-    )
+    """Check chain eligibility, then fetch a fresh result and publish when due."""
+    block, next_block, _ = weight_schedule(chain, state, blocks_between_weights)
+    logger.info("block: %s; next weight set: %s blocks", block, max(0, next_block - block))
+    if not dry_run and block < next_block:
+        return f"waiting for weight block {next_block} ({next_block - block} remaining)"
+    stop = stop if stop is not None else threading.Event()
+    for attempt in range(SNAPSHOT_ATTEMPTS):
+        if stop.is_set():
+            return "stopping before snapshot refresh"
+        try:
+            raw = service.request(
+                "GET",
+                "/scoring/snapshots/latest?" + urlencode({"netuid": chain.netuid}),
+                signed=True,
+            )
+            break
+        except (httpx.TransportError, ServiceError) as exc:
+            if (
+                isinstance(exc, ServiceError)
+                and exc.status < 500
+                and exc.status not in {408, 409, 429}
+            ):
+                raise
+            if attempt + 1 == SNAPSHOT_ATTEMPTS:
+                raise
+            delay = min(5 * 2**attempt, 60)
+            logger.warning(
+                "snapshot refresh failed (%s/%s); retrying in %ss: %s",
+                attempt + 1,
+                SNAPSHOT_ATTEMPTS,
+                delay,
+                exc,
+            )
+            if stop.wait(delay):
+                return "stopping during snapshot retry"
     confirmed_at, raw_weights, champion = read_result(
-        raw, netuid=chain.netuid, now=current_time, max_age_s=max_age_s
+        raw, netuid=chain.netuid, now=now or datetime.now(timezone.utc), max_age_s=max_age_s
     )
     previous = state.get("snapshot")
     if previous and confirmed_at < datetime.fromisoformat(previous["confirmed_at"]):
         raise ValueError("competition result rolled back")
+    # Miner UIDs may change while the results request is in flight.
     graph = chain.metagraph()
-    neuron = chain.registered(graph, validator=True)
+    chain.registered(graph, validator=True)
     by_hotkey = {miner.hotkey: miner.uid for miner in graph.neurons}
     # An absent incumbent must not redistribute its weight to older seats.
     if champion is None or champion not in by_hotkey:
@@ -90,8 +139,6 @@ def validator_step(
         for key, weight in raw_weights.items()
         if key in by_hotkey and weight > 0
     }
-    if weights:
-        chain.check_winner_allocation()
     state["snapshot"] = raw
     save_json(state_path, state)
     if not weights:
@@ -99,9 +146,6 @@ def validator_step(
     if dry_run:
         logger.info("preview weights: %s", weights)
         return "preview only; no weights submitted"
-    last = max(neuron.last_update, state.get("last_success_block", 0))
-    if last and graph.block - last < blocks_between_weights:
-        return "waiting for the next weight interval"
     result = chain.publish(weights, version_key=version_key)
     state.update(
         last_success_block=graph.block, published_snapshot=raw["id"], block_hash=result.block_hash
@@ -121,9 +165,13 @@ def main(argv=None) -> None:
     )
     # Accepted and ignored so existing launch commands keep working.
     parser.add_argument("--cohort", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--state", type=Path, required=True, help="durable validator state file")
+    parser.add_argument(
+        "--state",
+        type=Path,
+        help="state file override; defaults to a validator-specific file under "
+        "$XDG_STATE_HOME/yugos/validators or ~/.local/state/yugos/validators",
+    )
     parser.add_argument("--blocks-between-weights", type=int, default=100)
-    parser.add_argument("--poll-seconds", type=float, default=30)
     parser.add_argument("--max-snapshot-age-seconds", type=float, default=86400)
     parser.add_argument("--version-key", type=int, default=0)
     parser.add_argument("--once", action="store_true")
@@ -137,10 +185,8 @@ def main(argv=None) -> None:
         if (
             args.blocks_between_weights < 1
             or args.version_key < 0
-            or any(
-                not math.isfinite(v) or v <= 0
-                for v in (args.poll_seconds, args.max_snapshot_age_seconds)
-            )
+            or not math.isfinite(args.max_snapshot_age_seconds)
+            or args.max_snapshot_age_seconds <= 0
         ):
             raise ValueError(
                 "intervals and maximum snapshot age must be positive; version key nonnegative"
@@ -148,17 +194,19 @@ def main(argv=None) -> None:
         resolve_subnet(args)
         args.endpoint = resolve_miner_endpoint(args.endpoint, args.network)
         chain = configured_chain(args)
+        scope = {
+            "network": args.network,
+            "netuid": args.netuid,
+            "endpoint": args.endpoint,
+            "hotkey": chain.wallet.hotkey.ss58_address,
+        }
+        state_path = args.state if args.state is not None else default_state_path(scope)
+        logger.info("validator state file: %s", state_path)
         for signum in (signal.SIGINT, signal.SIGTERM):
             signal.signal(signum, lambda *_: stop.set())
-        with state_lock(args.state), httpx.Client(timeout=60, follow_redirects=False) as client:
+        with state_lock(state_path), httpx.Client(timeout=60, follow_redirects=False) as client:
             service = ServiceClient(args.endpoint, client, chain.wallet.hotkey)
-            scope = {
-                "network": args.network,
-                "netuid": args.netuid,
-                "endpoint": service.endpoint,
-                "hotkey": chain.wallet.hotkey.ss58_address,
-            }
-            state = json.loads(args.state.read_bytes()) if args.state.exists() else {}
+            state = json.loads(state_path.read_bytes()) if state_path.exists() else {}
             # Older state files also pinned a cohort; it no longer matters.
             saved = {k: v for k, v in state.get("scope", scope).items() if k != "cohort"}
             if "endpoint" in saved:
@@ -172,11 +220,12 @@ def main(argv=None) -> None:
                         service,
                         chain,
                         state=state,
-                        state_path=args.state,
+                        state_path=state_path,
                         blocks_between_weights=args.blocks_between_weights,
                         max_age_s=args.max_snapshot_age_seconds,
                         version_key=args.version_key,
                         dry_run=args.dry_run,
+                        stop=stop,
                     )
                     logger.info(status)
                 except Exception as exc:
@@ -185,7 +234,14 @@ def main(argv=None) -> None:
                     logger.error("validator cycle failed: %s", exc)
                 if args.once:
                     break
-                stop.wait(args.poll_seconds)
+                if not stop.is_set():
+                    block, next_block, interval = weight_schedule(
+                        chain, state, args.blocks_between_weights
+                    )
+                    if next_block <= block:
+                        next_block = block + interval
+                    logger.info("waiting for block %s", next_block)
+                    chain.wait_for_block(next_block, stop)
     except Exception as exc:
         parser.exit(1, f"{exc}\n")
 

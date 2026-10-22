@@ -1,6 +1,7 @@
 """Check the real SDK request shapes without opening a chain connection."""
 
 import json
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -24,6 +25,26 @@ from yugos.service_client import (
     ServiceError,
     service_url,
 )
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_block_wait_resumes_after_timeout_and_honors_shutdown(cancel):
+    calls, stop = [], threading.Event()
+
+    def wait_for_block(block, *, timeout):
+        calls.append(block)
+        assert timeout > 0
+        if len(calls) == 1:
+            if cancel:
+                stop.set()
+            raise TimeoutError
+
+    chain = Chain(None, SimpleNamespace(wait_for_block=wait_for_block), 7)
+    chain.wait_for_block(123, stop)
+    assert calls == ([123] if cancel else [123, 123])
+    stop.set()
+    chain.wait_for_block(456, stop)
+    assert 456 not in calls
 
 
 def test_commitment_and_weights_use_hotkey_operations_and_propagate_failure():
