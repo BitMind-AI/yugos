@@ -85,12 +85,12 @@ def validator_step(
     dry_run: bool = False,
     now: datetime | None = None,
     stop: threading.Event | None = None,
-) -> str:
+) -> str | None:
     """Check chain eligibility, then fetch a fresh result and publish when due."""
     block, next_block, _ = weight_schedule(chain, state, blocks_between_weights)
     logger.info("block: %s; next weight set: %s blocks", block, max(0, next_block - block))
     if not dry_run and block < next_block:
-        return f"waiting for weight block {next_block} ({next_block - block} remaining)"
+        return None
     stop = stop if stop is not None else threading.Event()
     for attempt in range(SNAPSHOT_ATTEMPTS):
         if stop.is_set():
@@ -227,7 +227,8 @@ def main(argv=None) -> None:
                         dry_run=args.dry_run,
                         stop=stop,
                     )
-                    logger.info(status)
+                    if status:
+                        logger.info(status)
                 except Exception as exc:
                     if args.once:
                         raise
@@ -240,8 +241,16 @@ def main(argv=None) -> None:
                     )
                     if next_block <= block:
                         next_block = block + interval
-                    logger.info("waiting for block %s", next_block)
-                    chain.wait_for_block(next_block, stop)
+                    while block < next_block and not stop.is_set():
+                        chain.wait_for_block(min(block + 5, next_block), stop)
+                        if not stop.is_set():
+                            block = chain.metagraph().block
+                            if block < next_block:
+                                logger.info(
+                                    "block: %s; next weight set: %s blocks",
+                                    block,
+                                    next_block - block,
+                                )
     except Exception as exc:
         parser.exit(1, f"{exc}\n")
 
