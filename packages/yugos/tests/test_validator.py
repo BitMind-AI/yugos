@@ -111,7 +111,7 @@ def test_weights_follow_current_hotkeys_across_restart_and_uid_reassignment(tmp_
     expected = CompetitionPublication.model_validate(results.raw).payload.weights()
     assert chain.published == [({3: expected["miner-a"]}, 4)]
     restored = json.loads((tmp_path / "state.json").read_bytes())
-    assert "waiting" in step(tmp_path, results, chain, restored)
+    assert step(tmp_path, results, chain, restored) is None
     chain.graph.block += 10
     chain.graph.neurons[1].uid = 17
     chain.graph.neurons.pop()
@@ -134,8 +134,7 @@ def test_weights_wait_for_both_chain_and_operator_intervals(
     validator.save_json(state_path, state)
     saved = state_path.read_bytes()
     chain.graph.block = due - 1
-    status = step(tmp_path, results, chain, state)
-    assert f"weight block {due}" in status and "1 remaining" in status
+    assert step(tmp_path, results, chain, state) is None
     assert not chain.published and results.calls == 0
     assert state_path.read_bytes() == saved and state == {"last_success_block": saved_last}
     restored = json.loads(saved)
