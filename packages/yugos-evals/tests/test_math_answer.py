@@ -127,6 +127,18 @@ def test_scorer_settles_answers_and_leaves_grader_failures_unscored():
     assert math.isnan(review.value) and review.metadata["code"] == "needs_review"
 
 
+def test_a_sample_ended_before_any_answer_is_not_attempted():
+    from inspect_ai.model import ModelOutput
+
+    # A limit (time, spend) can end the sample at its first turn: Inspect
+    # leaves no choice, whose stop reason must not be read.
+    state = task_state("")
+    state.output = ModelOutput(model="mockllm/model", choices=[])
+    score = anyio.run(math_answer_scorer(), state, Target("42"))
+    assert score.value == 0.0 and score.metadata["code"] == "not_attempted"
+    assert score.reason == "no_response"
+
+
 def _month_fixture(tmp_path, monkeypatch, rows):
     month = arxivmath.MONTHS[0]
     path = tmp_path / month.dataset / arxivmath.DATA_FILE
