@@ -68,10 +68,13 @@ def to_score(outcome: Outcome, *, answer: str | None = None, failure: str = "sco
 def completion_gate(state: TaskState) -> Outcome | None:
     """The outcome for an answer that must not be graded, as Yugos grading gates it.
 
-    A truncated answer is a graded zero; an answer the provider blocked is graded
-    incorrect; a completion that ended for another reason than `stop` (a tool
-    call) needs review.
+    A sample that ended at a limit before the router answered has no completion
+    and is not attempted, like an empty answer; a truncated answer is a graded
+    zero; an answer the provider blocked is graded incorrect; a completion that
+    ended for another reason than `stop` (a tool call) needs review.
     """
+    if not state.output.choices:
+        return Outcome(GradeCode.NOT_ATTEMPTED, details={"cause": "no_response"})
     reason = state.output.stop_reason
     if reason in _TRUNCATED:
         return Outcome(
