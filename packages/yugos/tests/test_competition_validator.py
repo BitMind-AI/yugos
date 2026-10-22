@@ -81,12 +81,13 @@ def test_replay_publishes_only_overall_champion_and_remaps_current_uid(tmp_path)
 
 
 def test_fresh_confirmation_allows_unchanged_history_after_24_hours(tmp_path):
-    old, state = publication(), {}
-    step(tmp_path, old, state)
+    old, state, chain = publication(), {}, ValidatorChain()
+    step(tmp_path, old, state, chain=chain)
     later = NOW + timedelta(hours=25)
     refreshed = publication(now=later)
     assert refreshed["id"] == old["id"]
-    step(tmp_path, refreshed, state, now=later)
+    chain.graph.block += 10
+    assert "published" in step(tmp_path, refreshed, state, now=later, chain=chain)
     with pytest.raises(ValueError, match="stale"):
         step(tmp_path, old, now=later)
 
@@ -117,34 +118,35 @@ def test_pause_and_empty_history_do_not_publish_an_alternative_winner(tmp_path):
 
 
 def test_incompatible_chain_limits_fail_before_state_or_transaction(tmp_path):
-    from types import SimpleNamespace
-
-    from yugos.chain import Chain
-
     chain = ValidatorChain()
-    chain.check_winner_allocation = Chain.check_winner_allocation.__get__(chain)
     state = {}
     for params in (
         {"min_allowed_weights": 2, "max_weights_limit": 65535},
         {"min_allowed_weights": 1, "max_weights_limit": 32767},
         {},
+        {"min_allowed_weights": 1, "max_weights_limit": 65535},
+        {"min_allowed_weights": 1, "max_weights_limit": 65535, "weights_rate_limit": -1},
     ):
-        chain.subtensor = SimpleNamespace(read=lambda *args, **kwargs: params)
+        chain.params = params
         with pytest.raises(ValueError, match="weight"):
             step(tmp_path, publication(), state, chain=chain)
         assert not chain.published and not state
-    chain.subtensor = SimpleNamespace(
-        read=lambda *args, **kwargs: {"min_allowed_weights": 1, "max_weights_limit": 65535}
-    )
+    chain.params = {
+        "min_allowed_weights": 1,
+        "max_weights_limit": 65535,
+        "weights_rate_limit": 0,
+    }
     step(tmp_path, publication(), state, chain=chain)
     assert chain.published == [({3: 1.0}, 2)]
 
 
 def test_a_new_policy_of_the_same_version_carries_on_with_saved_state(tmp_path):
     state, later = {}, NOW + timedelta(seconds=1)
-    step(tmp_path, publication(), state)
+    chain = ValidatorChain()
+    step(tmp_path, publication(), state, chain=chain)
     raw = publication(now=later)
     raw["payload"]["history"]["policy"]["bootstrap_seed"] = 1
     raw["id"] = digest(raw["payload"])
-    step(tmp_path, raw, state, now=later)
+    chain.graph.block += 10
+    step(tmp_path, raw, state, now=later, chain=chain)
     assert state["snapshot"] == raw

@@ -63,8 +63,8 @@ class Chain:
         result.raise_for_failure()
         return result
 
-    def check_winner_allocation(self) -> None:
-        """Reject chain settings that cannot represent the competition's single winner."""
+    def check_weight_settings(self) -> int:
+        """Check supported weight settings and return the chain's minimum block interval."""
         params = self.subtensor.read("subnet_hyperparameters", netuid=self.netuid)
         minimum = (params or {}).get("min_allowed_weights")
         maximum = (params or {}).get("max_weights_limit")
@@ -72,6 +72,19 @@ class Chain:
             raise ValueError("chain did not supply raw weight allocation limits")
         if minimum > 1 or minimum < 0 or maximum != 65535:
             raise ValueError("subnet weight limits do not permit winner-take-all allocation")
+        interval = params.get("weights_rate_limit")
+        if type(interval) is not int or interval < 0:
+            raise ValueError("chain did not supply a nonnegative weights rate limit")
+        return interval
+
+    def wait_for_block(self, block: int, stop) -> None:
+        """Use the SDK block subscription, checking shutdown between bounded waits."""
+        while not stop.is_set():
+            try:
+                self.subtensor.wait_for_block(block, timeout=60)
+                return
+            except TimeoutError:
+                continue
 
 
 # Public subnets. A raw chain endpoint still needs an explicit --netuid.

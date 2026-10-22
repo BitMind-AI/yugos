@@ -66,14 +66,13 @@ Preview one cycle without setting weights:
 yugos-validator \
   --wallet validator \
   --hotkey default \
-  --state /var/lib/yugos/validator-finney.json \
   --version-key WEIGHTS_VERSION \
   --once \
   --dry-run
 ```
 
-Drop `--once --dry-run` to publish on an interval. Testnet uses another state
-file, `--network test`, and `--endpoint`.
+Drop `--once --dry-run` to publish on an interval. Testnet uses `--network test`
+and `--endpoint`; its default state file is separate.
 
 ```sh
 yugos-validator \
@@ -81,7 +80,6 @@ yugos-validator \
   --endpoint "$YUGOS_ENDPOINT" \
   --wallet validator \
   --hotkey default \
-  --state /var/lib/yugos/validator-test.json \
   --once \
   --dry-run
 ```
@@ -95,22 +93,55 @@ yugos-validator \
 | `--hotkey` | `default` | Hotkey name inside the wallet. |
 | `--wallet-path` | `~/.bittensor/wallets` | Wallet directory. |
 | `--endpoint` | network default | Results service. HTTPS, no credentials or query string. |
-| `--state` | required | Durable JSON state. Must survive restarts. |
+| `--state` | automatic | Optional override for the durable JSON state file. |
 | `--version-key` | `0` | Chain weights version. Set this to the subnet's `weights_version`. |
-| `--blocks-between-weights` | `100` | Minimum blocks between successful publishes. |
-| `--poll-seconds` | `30` | Pause between cycles. |
+| `--blocks-between-weights` | `100` | Minimum blocks between successful publishes; the chain rate limit also applies. |
 | `--max-snapshot-age-seconds` | `86400` | Reject results older than this. |
 | `--once` | off | Exit after one cycle. |
 | `--dry-run` | off | Log the weight vector and skip the extrinsic. |
 
 `--cohort` is accepted and ignored so older launch scripts keep working.
 
-SIGINT and SIGTERM finish the current cycle and then exit.
+By default, state lives in `$XDG_STATE_HOME/yugos/validators/<scope-digest>.json`,
+or `~/.local/state/yugos/validators/<scope-digest>.json` when `XDG_STATE_HOME` is
+unset, empty, or relative. The filename is derived from the network, subnet,
+normalized endpoint and hotkey address, so restarts reuse progress and different
+validators use separate files. The resolved path is logged at startup. Keep that
+directory on persistent storage, or set `--state` to choose another location.
+
+SIGINT and SIGTERM stop waiting or retrying after the in-flight request or bounded
+SDK wait returns, then exit.
 
 ## Process supervision
 
 Run one validator process per state file under a supervisor that starts it on
-boot and restarts it if it exits. Example systemd unit
+boot and restarts it if it exits.
+
+### PM2
+
+With Node.js and PM2 installed, use
+[`validator.config.js`](../validator.config.js) from a checkout with Yugos
+installed in `.venv`. Edit its `args` for your wallet,
+hotkey and `--version-key`. Testnet also needs `--network test` and `--endpoint`.
+Change `script` if your virtualenv is elsewhere. The config launches one process,
+retries exits after 15 seconds, and allows 180 seconds for a cycle to finish on
+stop. [PM2's application settings](https://pm2.keymetrics.io/docs/usage/application-declaration/)
+describe the supervisor options.
+
+```sh
+pm2 start validator.config.js
+pm2 logs yugos-validator
+pm2 save
+pm2 startup
+```
+
+Run the command printed by `pm2 startup` to enable startup on boot. After editing
+the config, use `pm2 restart validator.config.js` and `pm2 save`. Use
+`pm2 stop yugos-validator` before running a manual cycle with the same state.
+
+### systemd
+
+Example unit
 (`/etc/systemd/system/yugos-validator.service`):
 
 ```ini
@@ -144,26 +175,42 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now yugos-validator
 ```
 
-Put the wallet and `validator-state.json` on persistent storage. A host restart
+Put the wallet and resolved state file on persistent storage. A host restart
 must come back to the same paths. The state file records the network, netuid,
-endpoint, and hotkey. Changing any of those requires a new state file.
+endpoint, and hotkey. Changing any of those selects a new default file; when
+overriding `--state`, choose a separate file for the new identity.
 
 ## Logs and monitoring
 
-Logs go to stderr at INFO, one line per cycle:
+Logs go to stderr at INFO. Each cycle logs the current chain block and the
+next eligible weight block, followed by its outcome:
 
 ```text
+2026-10-16 12:00:00,000 INFO chain block: 1000; next weight block: 1000
 2026-10-16 12:00:00,000 INFO published weights for 2 miners from snapshot <id>
-2026-10-16 12:00:30,000 INFO waiting for the next weight interval
-2026-10-16 12:01:00,000 INFO no eligible registered miners; weights unchanged
-2026-10-16 12:01:30,000 INFO preview only; no weights submitted
-2026-10-16 12:02:00,000 ERROR validator cycle failed: <reason>
+2026-10-16 12:00:00,000 INFO waiting for chain block 1100
+2026-10-16 12:20:00,000 INFO chain block: 1100; next weight block: 1100
+2026-10-16 12:20:00,000 INFO no eligible registered miners; weights unchanged
+2026-10-16 12:20:00,000 INFO waiting for chain block 1200
 ```
 
 With systemd: `journalctl -u yugos-validator -f`.
 
-A failed cycle in continuous mode is logged and retried on the next poll. The
-previous on-chain weights stay in place. The validator does not publish when
+The next publish is due after the larger of `--blocks-between-weights` and the
+subnet's `weights_rate_limit`, measured from the latest on-chain or saved
+successful update. The first publish can run immediately. Between attempts, the
+validator waits for the target block using the SDK's block subscription.
+
+Every weight submission requires a fresh snapshot fetched and validated during
+that attempt. Snapshot transport failures, unavailable publications, rate limits,
+and server errors get up to ten attempts, with delays increasing from five to
+60 seconds. Authentication errors and invalid snapshots fail immediately.
+Dry runs use the same snapshot retries. `--once` also performs those retries,
+then exits after success or exhausted retries.
+
+After an unsuccessful attempt or a result with no eligible weights, the validator
+waits another weight interval before trying again. Previous on-chain weights
+stay in place. The validator does not publish when
 the result is missing, stale, older than the last accepted result, paused,
 empty, or has no registered champion.
 
