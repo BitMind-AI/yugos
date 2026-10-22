@@ -9,7 +9,7 @@ module.exports = {
     args: [
       '--wallet', 'default',
       '--hotkey', 'default',
-      '--version-key', '0', // Set to the subnet's weights_version.
+      '--version-key', '404020', // Set to the subnet's weights_version.
     ],
     instances: 1,
     watch: false,
