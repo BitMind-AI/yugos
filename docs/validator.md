@@ -186,16 +186,16 @@ overriding `--state`, choose a separate file for the new identity.
 
 ## Logs and monitoring
 
-Logs go to stderr at INFO. Each cycle logs the current chain block and the
-next eligible weight block, followed by its outcome:
+Logs go to stderr at INFO. Each cycle logs the current block and the
+blocks remaining until the next weight set, followed by its outcome:
 
 ```text
-2026-10-16 12:00:00,000 INFO chain block: 1000; next weight block: 1000
+2026-10-16 12:00:00,000 INFO block: 1000; next weight set: 0 blocks
 2026-10-16 12:00:00,000 INFO published weights for 2 miners from snapshot <id>
-2026-10-16 12:00:00,000 INFO waiting for chain block 1100
-2026-10-16 12:20:00,000 INFO chain block: 1100; next weight block: 1100
+2026-10-16 12:00:00,000 INFO waiting for block 1100
+2026-10-16 12:20:00,000 INFO block: 1100; next weight set: 0 blocks
 2026-10-16 12:20:00,000 INFO no eligible registered miners; weights unchanged
-2026-10-16 12:20:00,000 INFO waiting for chain block 1200
+2026-10-16 12:20:00,000 INFO waiting for block 1200
 ```
 
 With systemd: `journalctl -u yugos-validator -f`.

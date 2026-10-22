@@ -88,7 +88,7 @@ def validator_step(
 ) -> str:
     """Check chain eligibility, then fetch a fresh result and publish when due."""
     block, next_block, _ = weight_schedule(chain, state, blocks_between_weights)
-    logger.info("chain block: %s; next weight block: %s", block, next_block)
+    logger.info("block: %s; next weight set: %s blocks", block, max(0, next_block - block))
     if not dry_run and block < next_block:
         return f"waiting for weight block {next_block} ({next_block - block} remaining)"
     stop = stop if stop is not None else threading.Event()
@@ -240,7 +240,7 @@ def main(argv=None) -> None:
                     )
                     if next_block <= block:
                         next_block = block + interval
-                    logger.info("waiting for chain block %s", next_block)
+                    logger.info("waiting for block %s", next_block)
                     chain.wait_for_block(next_block, stop)
     except Exception as exc:
         parser.exit(1, f"{exc}\n")
