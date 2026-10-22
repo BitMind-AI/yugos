@@ -594,6 +594,53 @@ for name in ('bittensor', 'brr', 'torch', 'modal'):
     assert inspect_bundle(output).required_models == tuple(ModelChoice(**m) for m in models)
 
 
+@pytest.mark.parametrize(
+    "command,custom_config,exit_code",
+    [("validator", False, 0), ("v", True, 0), ("v", True, 7)],
+)
+def test_installed_validator_start_wraps_pm2_and_preserves_exit_status(
+    tmp_path, monkeypatch, command, custom_config, exit_code
+):
+    import subprocess
+    import sys
+
+    config = tmp_path / ("custom config.js" if custom_config else "validator.config.js")
+    config.write_text("module.exports = {};")
+    pm2 = tmp_path / "pm2"
+    pm2.write_text(
+        f"#!{sys.executable}\nimport json, sys\n"
+        f"print(json.dumps(sys.argv[1:]))\nsys.exit({exit_code})\n"
+    )
+    pm2.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    script = "import sys\nfrom yugos.miner import main\nmain(sys.argv[1:])"
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script, command, "start"]
+        + (["--config", str(config)] if custom_config else []),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == exit_code, result.stderr
+    assert json.loads(result.stdout) == ["start", str(config)]
+
+
+@pytest.mark.parametrize("missing", ["config", "pm2"])
+def test_validator_start_reports_missing_prerequisites(tmp_path, monkeypatch, capsys, missing):
+    from yugos.miner import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    if missing == "pm2":
+        (tmp_path / "validator.config.js").write_text("module.exports = {};")
+    with pytest.raises(SystemExit) as exc:
+        main(["validator", "start"])
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert ("--config" if missing == "config" else "PATH") in error
+
+
 @pytest.mark.parametrize("declaration", [None, "{", "[]", '[{"provider_id":"p"}]'])
 def test_pack_cli_rejects_missing_or_invalid_models_without_replacing_output(
     tmp_path, declaration, capsys

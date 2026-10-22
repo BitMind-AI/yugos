@@ -129,11 +129,15 @@ stop. [PM2's application settings](https://pm2.keymetrics.io/docs/usage/applicat
 describe the supervisor options.
 
 ```sh
-pm2 start validator.config.js
+yugos validator start
 pm2 logs yugos-validator
 pm2 save
 pm2 startup
 ```
+
+`yugos v start` is an alias. Run from the checkout root, or pass
+`--config /path/to/validator.config.js`. The command wraps `pm2 start` and
+preserves its output and exit status.
 
 Run the command printed by `pm2 startup` to enable startup on boot. After editing
 the config, use `pm2 restart validator.config.js` and `pm2 save`. Use
