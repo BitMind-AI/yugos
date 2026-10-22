@@ -7,7 +7,7 @@ module.exports = {
     script: path.join(__dirname, '.venv', 'bin', 'yugos-validator'),
     interpreter: 'none',
     args: [
-      '--wallet', 'validator',
+      '--wallet', 'default',
       '--hotkey', 'default',
       '--version-key', '0', // Set to the subnet's weights_version.
     ],
