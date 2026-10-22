@@ -118,7 +118,12 @@ def test_scorer_settles_answers_and_leaves_grader_failures_unscored():
     # An invalid reference is never a silent zero.
     invalid = _score("\\boxed{42}", target="")
     assert math.isnan(invalid.value) and invalid.metadata["code"] == "invalid_gold"
-    review = _score("\\boxed{42}", stop_reason="content_filter")
+    # A provider block is the answer as given: graded incorrect, even if it
+    # happens to contain the reference.
+    blocked = _score("\\boxed{42}", stop_reason="content_filter")
+    assert blocked.value == 0.0 and blocked.metadata["code"] == "incorrect"
+    assert blocked.metadata["cause"] == "provider_blocked"
+    review = _score("\\boxed{42}", stop_reason="tool_calls")
     assert math.isnan(review.value) and review.metadata["code"] == "needs_review"
 
 

@@ -19,6 +19,9 @@ from yugos.evaluation.grades import GradeCode
 
 # Inspect stop reasons for an answer cut off by a token limit.
 _TRUNCATED = frozenset({"max_tokens", "model_length"})
+# Inspect's stop reason for an answer the provider blocked (a content filter or
+# refusal). The block is the answer the router chose to return.
+_BLOCKED = frozenset({"content_filter"})
 # Settled model-under-test outcomes and Inspect's standard reason for each.
 _REASONS = {
     GradeCode.NOT_ATTEMPTED: "no_response",
@@ -65,14 +68,17 @@ def to_score(outcome: Outcome, *, answer: str | None = None, failure: str = "sco
 def completion_gate(state: TaskState) -> Outcome | None:
     """The outcome for an answer that must not be graded, as Yugos grading gates it.
 
-    A truncated answer is a graded zero; a completion that ended for another
-    reason than `stop` (a tool call or content filter) needs review.
+    A truncated answer is a graded zero; an answer the provider blocked is graded
+    incorrect; a completion that ended for another reason than `stop` (a tool
+    call) needs review.
     """
     reason = state.output.stop_reason
     if reason in _TRUNCATED:
         return Outcome(
             GradeCode.TRUNCATED, status="skipped", details={"cause": "incomplete_response"}
         )
+    if reason in _BLOCKED:
+        return Outcome(GradeCode.INCORRECT, details={"cause": "provider_blocked"})
     if reason != "stop":
         return Outcome(
             GradeCode.NEEDS_REVIEW,
