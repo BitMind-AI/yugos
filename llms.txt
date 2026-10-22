@@ -63,7 +63,7 @@ curl -s https://upload.yugos.ai/world/cards/active \
   | jq -r '.card.providers[] | .provider_id as $p | .token_prices | keys[] | [$p, .] | @tsv'
 ```
 
-Known provider ids: `openai`, `anthropic`, `google`, `openrouter`, `venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, `chutes`. The card is the authority. For a local run, set that provider's key yourself (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `VENICE_API_KEY`, `GM_API_KEY`, `ENGY_API_KEY`, `XAI_API_KEY` for `spacexai`, `NOUS_API_KEY`, `DEEPSEEK_API_KEY`, `CHUTES_API_KEY`). The runner reads the environment. It does not load a `.env` file. The packer skips hidden files, so a `.env` beside `model.py` is not uploaded.
+Known provider ids: `openai`, `anthropic`, `google`, `openrouter`, `venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, `chutes`, `near`, and `0g`. The card is the authority. For a local run, set that provider's key yourself (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `VENICE_API_KEY`, `GM_API_KEY`, `ENGY_API_KEY`, `XAI_API_KEY` for `spacexai`, `NOUS_API_KEY`, `DEEPSEEK_API_KEY`, `CHUTES_API_KEY`, `NEAR_AI_API_KEY`, `ZEROG_API_KEY`). The runner reads the environment. It does not load a `.env` file. The packer skips hidden files, so a `.env` beside `model.py` is not uploaded.
 
 ## Procedure
 

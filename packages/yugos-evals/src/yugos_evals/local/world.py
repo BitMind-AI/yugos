@@ -65,6 +65,8 @@ DEFAULT_PROVIDERS: dict[str, ProviderAccess] = {
     "nous": _openai_compatible("nous", "https://inference-api.nousresearch.com/v1", "NOUS_API_KEY"),
     "deepseek": _openai_compatible("deepseek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
     "chutes": _openai_compatible("chutes", "https://llm.chutes.ai/v1", "CHUTES_API_KEY"),
+    "near": _openai_compatible("near", "https://cloud-api.near.ai/v1", "NEAR_AI_API_KEY"),
+    "0g": _openai_compatible("0g", "https://router-api.0g.ai/v1", "ZEROG_API_KEY"),
 }
 
 

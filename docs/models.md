@@ -34,7 +34,8 @@ repeated in `models.json` if `solve` can yield it. Duplicate choices are
 rejected.
 
 The known provider ids are `openai`, `anthropic`, `google`, `openrouter`,
-`venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, and `chutes`. The
+`venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, `chutes`, `near`, and
+`0g`. The
 card is the authority. A provider with no `token_prices` entry is not
 available, even if it appears in this paragraph.
 
@@ -54,3 +55,5 @@ not give you these keys.
 | `nous` | `NOUS_API_KEY` |
 | `deepseek` | `DEEPSEEK_API_KEY` |
 | `chutes` | `CHUTES_API_KEY` |
+| `near` | `NEAR_AI_API_KEY` |
+| `0g` | `ZEROG_API_KEY` |
