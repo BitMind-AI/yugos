@@ -68,6 +68,8 @@ These provider integrations are available in Yugos. The catalog and the competit
 | Nous Research | `nous` | `NOUS_API_KEY` |
 | Chutes | `chutes` | `CHUTES_API_KEY` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
+| NEAR | `near` | `NEAR_AI_API_KEY` |
+| 0G | `0g` | `ZEROG_API_KEY` |
 
 ### Find the current catalog
 

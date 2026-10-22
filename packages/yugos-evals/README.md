@@ -101,7 +101,7 @@ the numbers). Quality floors and hosted time limits are not applied locally.
 Each provider reads its key from the environment: `OPENAI_API_KEY`,
 `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `VENICE_API_KEY`,
 `DEEPSEEK_API_KEY`, `XAI_API_KEY` (provider id `spacexai`), `NOUS_API_KEY`,
-`CHUTES_API_KEY`, `GM_API_KEY`, `ENGY_API_KEY`. Install the SDK Inspect expects
+`CHUTES_API_KEY`, `GM_API_KEY`, `ENGY_API_KEY`, `NEAR_AI_API_KEY`, `ZEROG_API_KEY`. Install the SDK Inspect expects
 (`openai`, `anthropic`, or `google-genai`). The worker subprocess does not
 receive variables that look like credentials.
 
