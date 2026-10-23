@@ -260,3 +260,69 @@ def test_concurrent_samples_keep_their_own_host_duration(tmp_path):
     )
     for row in measure_log(log, []):
         assert row.active_ns / 1e9 == pytest.approx(float(row.measurement.question_id), abs=0.06)
+
+
+@pytest.mark.parametrize("ending", ["success", "error", "cancelled", "exhausted"])
+@pytest.mark.parametrize("durations", [(0.0, 0.0), (0.02, 0.03)])
+@pytest.mark.parametrize("backoff", [0.0, 0.03])
+def test_complete_generation_reconciles_retry_waits_once(
+    tmp_path, monkeypatch, ending, durations, backoff
+):
+    import anyio
+    import tenacity
+    from inspect_ai._util.working import sample_working_time
+    from inspect_ai.model import ModelOutput, _retry
+    from inspect_ai.solver import solver
+
+    from yugos.inspect_engine import record_model_time
+
+    monkeypatch.setattr(
+        _retry, "wait_exponential_jitter", lambda **kwargs: tenacity.wait_fixed(backoff)
+    )
+    calls, observed = [], []
+    terminal = (
+        asyncio.CancelledError
+        if ending == "cancelled"
+        else tenacity.RetryError
+        if ending == "exhausted"
+        else RouterError
+    )
+
+    async def client(call):
+        calls.append(call)
+        await anyio.sleep(0.15)  # Host bookkeeping on both attempts.
+        if len(calls) == 1 or ending == "exhausted":
+            record_model_time(durations[0] if len(calls) == 1 else durations[1])
+            raise RouterUnavailable("not dispatched")
+        if ending != "success":
+            record_model_time(durations[1])
+            raise terminal("terminated")
+        return RouterReply(content="yes", finish_reason="stop", time_s=durations[1])
+
+    @solver
+    def observe_generation():
+        async def solve(state, generate):
+            started = sample_working_time()
+            try:
+                state = await generate(state)
+            except terminal:
+                if ending == "success":
+                    raise
+            observed.append(sample_working_time() - started)
+            state.output = ModelOutput.from_content("timed", "yes")
+            return state
+
+        return solve
+
+    task = Task(
+        dataset=[Sample(id="q", input="question", target="yes")],
+        solver=observe_generation(),
+        scorer=includes(),
+    )
+    log = run_competition_eval(
+        task, router_model(client, submission_id="retry"), log_dir=str(tmp_path), display="none"
+    )
+    assert log.status == "success"
+    assert len(calls) == (3 if ending == "exhausted" else 2)
+    expected = durations[0] + durations[1] * (len(calls) - 1)
+    assert observed == pytest.approx([expected], abs=0.025)

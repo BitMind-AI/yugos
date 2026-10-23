@@ -10,11 +10,19 @@ the conversation, tools and generation settings, never targets or metadata.
 
 from __future__ import annotations
 
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Literal
 
+from inspect_ai._util.working import (
+    report_sample_waiting_time,
+    sample_waiting_time,
+    sample_working_time,
+)
 from inspect_ai.model import (
     ChatCompletionChoice,
     ChatMessage,
@@ -132,6 +140,59 @@ def _output(reply: RouterReply, model: str, elapsed_s: float) -> ModelOutput:
     )
 
 
+@dataclass
+class _GenerationTiming:
+    starting_work_s: float
+    work_s: float = 0.0
+    callbacks: int = 0
+    supplied: bool = False
+
+    def record(self, seconds: float, *, supplied: bool) -> None:
+        self.work_s += seconds
+        self.callbacks += 1
+        self.supplied |= supplied
+
+
+_generation_timing: ContextVar[_GenerationTiming | None] = ContextVar(
+    "router_generation_timing", default=None
+)
+
+
+def model_working_time() -> float:
+    """Read Inspect question work without pending model bookkeeping or retry waits."""
+    timing = _generation_timing.get()
+    return timing.starting_work_s + timing.work_s if timing else sample_working_time()
+
+
+def record_model_time(seconds: float) -> None:
+    """Supply host-measured work before a model callback raises, including cancellation."""
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError("model work must be finite and nonnegative")
+    if timing := _generation_timing.get():
+        timing.record(seconds, supplied=True)
+
+
+class _RouterInspectModel(Model):
+    async def generate(self, *args, **kwargs):
+        # Inspect reconciles successful generations across every retry, while a
+        # terminal exception skips that reconciliation. Own the final adjustment
+        # around its complete generation so earlier callbacks cannot earn credit twice.
+        timing = _GenerationTiming(sample_working_time())
+        token = _generation_timing.set(timing)
+        started, waiting = time.monotonic(), sample_waiting_time()
+        try:
+            return await super().generate(*args, **kwargs)
+        finally:
+            try:
+                if timing.supplied:
+                    already_waiting = sample_waiting_time() - waiting
+                    report_sample_waiting_time(
+                        time.monotonic() - started - timing.work_s - already_waiting
+                    )
+            finally:
+                _generation_timing.reset(token)
+
+
 @modelapi(name=API_NAME)
 class RouterModel(ModelAPI):
     """Inspect ModelAPI for one submission's router."""
@@ -174,19 +235,28 @@ class RouterModel(ModelAPI):
             raise RuntimeError("router model has no bound client")
         request = ModelInput.from_inspect(input, tools, tool_choice, config)
         call = RouterCall(submission_id=self.model_name, scope=scope, request=request)
-        started = time.perf_counter()
+        started = time.monotonic()
+        timing = _generation_timing.get()
+        callbacks = timing.callbacks if timing else 0
+        work = timing.work_s if timing else 0.0
         try:
             reply = RouterReply.model_validate(await self._client(call))
-        except RouterError as exc:
-            store().set(ROUTER_FAILURE_KEY, str(exc) or type(exc).__name__)
+        except BaseException as exc:
+            elapsed = time.monotonic() - started
+            if timing is not None:
+                if timing.callbacks != callbacks:
+                    # Keep the clock usable between retries. The outer generation
+                    # reconciles this credit with Inspect's own adjustment at the end.
+                    report_sample_waiting_time(elapsed - (timing.work_s - work))
+                else:
+                    timing.record(elapsed, supplied=False)
+            if isinstance(exc, RouterError):
+                store().set(ROUTER_FAILURE_KEY, str(exc) or type(exc).__name__)
             raise
-        elapsed = time.perf_counter() - started
+        elapsed = time.monotonic() - started
         duration = reply.time_s if reply.time_s is not None else elapsed
-        if duration == 0:
-            # Inspect 0.3.272 skips waiting-time reconciliation for a zero time.
-            from inspect_ai._util.working import report_sample_waiting_time
-
-            report_sample_waiting_time(elapsed)
+        if timing is not None:
+            timing.record(duration, supplied=reply.time_s is not None)
         return _output(reply, self.model_name, duration), ModelCall(
             request={}, response={}, time=duration
         )
@@ -197,4 +267,4 @@ def router_model(
 ) -> Model:
     """Return an Inspect `Model` that sends every generate call to `client`."""
     config = config or GenerateConfig()
-    return Model(RouterModel(submission_id, client, config), config)
+    return _RouterInspectModel(RouterModel(submission_id, client, config), config)
