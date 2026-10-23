@@ -22,6 +22,7 @@ from inspect_ai.model import (
     GenerateConfig,
     Model,
     ModelAPI,
+    ModelCall,
     ModelOutput,
     ModelUsage,
     RetryDecision,
@@ -71,6 +72,8 @@ class RouterReply(BaseModel):
     # Provider-reported token usage, informational only; spend comes from receipts.
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    # Host-measured model work, excluding its persistence and recovery waits.
+    time_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 RouterClient = Callable[[RouterCall], Awaitable[RouterReply]]
@@ -163,7 +166,7 @@ class RouterModel(ModelAPI):
         tools: list[ToolInfo],
         tool_choice: ToolChoice,
         config: GenerateConfig,
-    ) -> ModelOutput:
+    ) -> tuple[ModelOutput, ModelCall]:
         scope = active_sample_scope()
         if scope is None:
             raise RuntimeError("router calls must run inside an Inspect sample to be metered")
@@ -177,7 +180,16 @@ class RouterModel(ModelAPI):
         except RouterError as exc:
             store().set(ROUTER_FAILURE_KEY, str(exc) or type(exc).__name__)
             raise
-        return _output(reply, self.model_name, time.perf_counter() - started)
+        elapsed = time.perf_counter() - started
+        duration = reply.time_s if reply.time_s is not None else elapsed
+        if duration == 0:
+            # Inspect 0.3.272 skips waiting-time reconciliation for a zero time.
+            from inspect_ai._util.working import report_sample_waiting_time
+
+            report_sample_waiting_time(elapsed)
+        return _output(reply, self.model_name, duration), ModelCall(
+            request={}, response={}, time=duration
+        )
 
 
 def router_model(
