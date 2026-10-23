@@ -31,9 +31,11 @@ class FairnessProfile(BaseModel):
     max_sandboxes: int = Field(default=8, ge=1, strict=True)
     # Retries apply only to RouterUnavailable, which cannot duplicate spend.
     max_retries: int = Field(default=2, ge=0, strict=True)
-    attempt_timeout_s: int = Field(default=600, ge=1, strict=True)
+    # An execution host with its own measured-work deadline can disable Inspect's
+    # wall clock limits, which also include its database and recovery waits.
+    attempt_timeout_s: int | None = Field(default=600, ge=1, strict=True)
     call_timeout_s: int = Field(default=1800, ge=1, strict=True)
-    working_limit_s: int = Field(default=3600, ge=1, strict=True)
+    working_limit_s: int | None = Field(default=3600, ge=1, strict=True)
 
 
 def competition_eval_options(profile: FairnessProfile | None = None) -> dict[str, Any]:

@@ -42,6 +42,16 @@ PACK = [
 COHORT = "c" * 64
 
 
+def test_host_owned_work_clock_can_disable_inspect_wall_limits():
+    options = competition_eval_options(FairnessProfile(
+        attempt_timeout_s=None, working_limit_s=None,
+    ))
+    assert options["attempt_timeout"] is None
+    assert options["working_limit"] is None
+    with pytest.raises(ValueError):
+        FairnessProfile(working_limit_s=0)
+
+
 def recorded_sample(qid, score, active_ns, *, unavailable=False):
     return SampleMeasurement(
         measurement=QuestionMeasurement(

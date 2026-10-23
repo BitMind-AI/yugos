@@ -28,6 +28,34 @@ ACTION = CallAction(
 )
 
 
+@pytest.mark.parametrize("provider_s", [0.25, 2.0])
+def test_host_work_clock_excludes_persistence_but_still_enforces_work_budget(monkeypatch, provider_s):
+    wall, active, records = [0.0], [0.0], []
+    monkeypatch.setattr("yugos.inference.calls.time", SimpleNamespace(monotonic=lambda: wall[0]))
+
+    def prepare(intent):
+        wall[0] += 60
+        return intent.request
+
+    def complete(request):
+        wall[0] += 90
+        active[0] += provider_s
+        return ModelResponse(text="answer", cost_usd=0.02, latency_s=provider_s)
+
+    def record(call):
+        wall[0] += 120
+        records.append(call)
+
+    meter = MeteredCalls("run", SimpleNamespace(quote=lambda _: 0.1, complete=complete),
+                        CallLimits(max_cost_usd=1, max_question_cost_usd=1), record, prepare_call=prepare)
+    if provider_s > 1:
+        with pytest.raises(QuestionLimitExceeded, match="time limit"):
+            meter.execute(ACTION, "q", deadline=1, clock=lambda: active[0])
+    else:
+        assert meter.execute(ACTION, "q", deadline=1, clock=lambda: active[0]).text == "answer"
+    assert len(records) == 1 and meter.cost_usd == 0.02
+
+
 @pytest.mark.parametrize("preparation_s", [0.4, 1.0, 2.0])
 def test_host_preparation_consumes_the_question_allowance(monkeypatch, preparation_s):
     now, dispatched, records = [0.0], [], []

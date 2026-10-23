@@ -223,11 +223,15 @@ class MeteredCalls:
         *,
         deadline: float,
         max_output_tokens: int | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> ModelResponse:
         """Reserve before dispatch; persist each response before releasing its reservation."""
+        # The host may supply a measured-work clock so its persistence and
+        # recovery waits cannot turn a completed answer into a miner timeout.
+        clock = clock or time.monotonic
         budget = self.budget
         limits = budget.limits
-        remaining = deadline - time.monotonic()
+        remaining = deadline - clock()
         if remaining <= 0:
             raise QuestionLimitExceeded("question time limit reached")
         caps = [
@@ -271,7 +275,7 @@ class MeteredCalls:
             question_cost = committed_usd(question_calls)
             if quote > limits.max_question_cost_usd - question_cost - math.fsum(pending) + 1e-12:
                 raise QuestionLimitExceeded("question budget cannot fund the next call")
-            remaining = deadline - time.monotonic()
+            remaining = deadline - clock()
             if remaining <= 0:
                 raise QuestionLimitExceeded("question time limit reached")
             request = request.model_copy(
@@ -304,7 +308,7 @@ class MeteredCalls:
                     budget.stop()
                     raise CallError("prepared call changed the request or reused its identity")
                 request = prepared
-            remaining = deadline - time.monotonic()
+            remaining = deadline - clock()
             if remaining <= 0:
                 raise QuestionLimitExceeded("question time limit reached")
             request = request.model_copy(update={"timeout_s": min(request.timeout_s, remaining)})
@@ -353,6 +357,6 @@ class MeteredCalls:
             del budget.reservations[request.call_id]
             if response.error is not None:
                 raise ProviderCallFailed(f"provider request failed: {response.error}", pending=call)
-        if time.monotonic() > deadline:
+        if clock() > deadline:
             raise QuestionLimitExceeded("question time limit reached")
         return call.response
