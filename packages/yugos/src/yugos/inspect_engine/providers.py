@@ -43,7 +43,7 @@ class InspectGeneration:
 def request_api_format(
     provider_id: str, api_format: str, model: ModelChoice, input: ModelInput
 ) -> str:
-    """The wire format for a call: OpenAI tool conversations use the Responses API.
+    """Use Responses for native OpenAI and SayGM GPT tool conversations.
 
     Submissions never choose an endpoint; a conversation with tools, earlier tool
     calls, or Responses continuation from this exact model moves to Responses.
@@ -52,7 +52,10 @@ def request_api_format(
         raise ValueError(f"unsupported api_format {api_format!r}")
     if api_format == RESPONSES_API_FORMAT:
         return api_format
-    if provider_id != "openai" or api_format != "openai":
+    native_gpt = provider_id == "openai" or (
+        provider_id == "gm" and model.model_id.startswith("gpt-")
+    )
+    if not native_gpt or api_format != "openai":
         return api_format
     if input.tools:
         return RESPONSES_API_FORMAT
@@ -110,7 +113,7 @@ def inspect_generation(
         return InspectGeneration(
             f"anthropic/{model_id}", wire, config, {"streaming": False, "max_retries": 0}
         )
-    if provider_id == "openai":
+    if provider_id == "openai" or wire == RESPONSES_API_FORMAT:
         return InspectGeneration(
             f"openai/{model_id}",
             wire,
