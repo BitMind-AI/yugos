@@ -91,8 +91,15 @@ LOOKUP = ToolInfo(name="lookup", description="d", parameters={"type": "object"})
             COMPATIBLE_ARGS,
         ),
         ("venice", "openai", "m", "openai-api/venice/m", "openai", COMPATIBLE_ARGS),
-        # A non-OpenAI provider never takes OpenAI's Responses flags.
-        ("acme", "openai_responses", "m", "openai-api/acme/m", "openai_responses", COMPATIBLE_ARGS),
+        # A provider explicitly configured for Responses must use that adapter.
+        (
+            "acme",
+            "openai_responses",
+            "m",
+            "openai/m",
+            "openai_responses",
+            {**OPENAI_ARGS, "responses_api": True},
+        ),
     ],
 )
 @pytest.mark.parametrize("effort", [None, "none", "low", "max"])
@@ -134,12 +141,13 @@ def test_unrequested_settings_stay_unset_and_invalid_requests_fail_before_dispat
         inspect_generation("acme", "cohere", choice("acme"), sampled(), max_output_tokens=10)
 
 
-def test_openai_tool_conversations_use_responses_and_only_own_continuation_counts():
-    model = choice("openai", "gpt-5", "low")
+@pytest.mark.parametrize("provider", ["openai", "gm"])
+def test_gpt_tool_conversations_use_responses_and_only_own_continuation_counts(provider):
+    model = choice(provider, "gpt-5", "low")
     plain = ModelInput.from_text("hi")
-    assert request_api_format("openai", "openai", model, plain) == "openai"
+    assert request_api_format(provider, "openai", model, plain) == "openai"
     with_tools = plain.model_copy(update={"tools": (LOOKUP,)})
-    assert request_api_format("openai", "openai", model, with_tools) == "openai_responses"
+    assert request_api_format(provider, "openai", model, with_tools) == "openai_responses"
     called = ModelInput(
         messages=(
             ChatMessageUser(content="hi"),
@@ -149,11 +157,11 @@ def test_openai_tool_conversations_use_responses_and_only_own_continuation_count
             ChatMessageTool(content="x", tool_call_id="c1"),
         )
     )
-    assert request_api_format("openai", "openai", model, called) == "openai_responses"
+    assert request_api_format(provider, "openai", model, called) == "openai_responses"
 
     def continued(effort):
         state = ProviderState(
-            provider_id="openai",
+            provider_id=provider,
             model_id="gpt-5",
             effort=effort,
             data={"api": "openai_responses", "message": {}},
@@ -166,10 +174,67 @@ def test_openai_tool_conversations_use_responses_and_only_own_continuation_count
             )
         )
 
-    assert request_api_format("openai", "openai", model, continued("low")) == "openai_responses"
-    assert request_api_format("openai", "openai", model, continued("high")) == "openai"
-    # Only OpenAI's own provider moves to Responses.
+    assert request_api_format(provider, "openai", model, continued("low")) == "openai_responses"
+    assert request_api_format(provider, "openai", model, continued("high")) == "openai"
+    # Providers without the native GPT Responses path keep their configured API.
     assert request_api_format("venice", "openai", choice("venice"), with_tools) == "openai"
+
+
+@pytest.mark.parametrize(
+    ("effort", "native_effort"), [(None, None), ("none", "none"), ("low", "low"), ("max", "xhigh")]
+)
+def test_saygm_gpt_tools_serialize_stateless_responses_without_changing_effort(
+    effort, native_effort
+):
+    """Catch the rejected GPT-5.4 tools/reasoning Chat Completions request."""
+    import httpx2
+
+    sent = []
+    model = choice("gm", "gpt-5.4", effort)
+    input = ModelInput(messages=(ChatMessageUser(content="Look up a key"),), tools=(LOOKUP,))
+    spec = inspect_generation("gm", "openai", model, input, max_output_tokens=64000)
+
+    def capture(request):
+        sent.append((str(request.url), json.loads(request.content)))
+        raise RuntimeError("captured")
+
+    adapter = get_model(
+        spec.model_name,
+        config=spec.config,
+        base_url="https://api.saygm.com/v1",
+        api_key="gm-test",
+        memoize=False,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(capture)),
+        **spec.model_args,
+    )
+
+    async def generate():
+        try:
+            await adapter.api.generate(list(input.messages), [LOOKUP], "auto", spec.config)
+        except RuntimeError:
+            pass
+        finally:
+            await adapter.api.aclose()
+
+    asyncio.run(generate())
+    [(url, body)] = sent
+    assert url == "https://api.saygm.com/v1/responses"
+    assert body["model"] == "gpt-5.4" and body["store"] is False
+    assert spec.config.reasoning_effort == effort
+    assert body.get("reasoning") == ({"effort": native_effort} if effort is not None else None)
+    assert body["tools"][0]["name"] == "lookup"
+    assert "previous_response_id" not in body and "reasoning_effort" not in body
+
+
+def test_saygm_keeps_plain_gpt_and_other_model_protocols():
+    plain = ModelInput.from_text("hi")
+    tools = plain.model_copy(update={"tools": (LOOKUP,)})
+    assert request_api_format("gm", "openai", choice("gm", "gpt-5.4"), plain) == "openai"
+    assert request_api_format("gm", "openai", choice("gm", "glm-5.3"), tools) == "openai"
+    assert (
+        request_api_format("gm", "anthropic", choice("gm", "claude-haiku-5-5"), tools)
+        == "anthropic"
+    )
 
 
 def serialized(provider, api_format, model, effort, base_url):
