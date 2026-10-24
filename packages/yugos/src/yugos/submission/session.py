@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from threading import RLock
 from typing import Literal, Protocol
@@ -83,6 +83,7 @@ class RequestOutcome:
     request_id: str
     state: RequestState
     session_exit: SessionExit | None = None
+    decision_time_ns: int = 0
 
 
 class SessionError(RuntimeError):
@@ -137,8 +138,18 @@ class SubmissionSession:
         with self._lock:
             return self._requests.get(request_id)
 
+    def decision_time_ns(self, request_id: str) -> int:
+        """Return worker exchange time, excluding waiting for the session lock."""
+        with self._lock:
+            outcome = self._requests.get(request_id)
+            return outcome.decision_time_ns if outcome else 0
+
     def _outcome(self, request_id, state):
-        outcome = RequestOutcome(request_id, state, self._session_exit)
+        previous = self._requests.get(request_id)
+        outcome = RequestOutcome(
+            request_id, state, self._session_exit,
+            previous.decision_time_ns if previous else 0,
+        )
         self._requests[request_id] = outcome
         return outcome
 
@@ -148,7 +159,18 @@ class SubmissionSession:
 
     def _exchange(self, message: Message, timeout_s: float) -> Message:
         """Send a request and verify that the reply belongs to this session and sequence."""
-        raw = self._worker.exchange(encode_line(message), timeout_s=timeout_s)
+        encoded = encode_line(message)
+        started_ns = time.monotonic_ns()
+        try:
+            raw = self._worker.exchange(encoded, timeout_s=timeout_s)
+        finally:
+            if isinstance(message, (Solve, Resume)):
+                outcome = self._requests[message.request_id]
+                self._requests[message.request_id] = replace(
+                    outcome,
+                    decision_time_ns=outcome.decision_time_ns
+                    + max(0, time.monotonic_ns() - started_ns),
+                )
         try:
             reply = decode_line(raw)
             if reply.session_id != self._id or reply.sequence != message.sequence + 1:

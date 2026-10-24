@@ -47,6 +47,8 @@ from .router_model import (  # noqa: E402
     RouterReply,
     RouterToolCall,
     RouterUnavailable,
+    model_working_time,
+    record_model_time,
     router_model,
 )
 from .run import run_competition_eval  # noqa: E402
@@ -88,6 +90,8 @@ __all__ = [
     "require_grader_roles",
     "require_role_pins",
     "role_pins_metadata",
+    "model_working_time",
+    "record_model_time",
     "router_model",
     "run_competition_eval",
     "served_model",
