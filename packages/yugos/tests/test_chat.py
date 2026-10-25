@@ -88,6 +88,70 @@ def test_provider_continuation_accepts_inspect_tool_view_but_rejects_changed_arg
         provider_messages(request({"name": "other"}), model)
 
 
+@pytest.mark.parametrize("text", ["", "Actual assistant text"])
+def test_transferred_tool_only_message_does_not_invent_text_or_mutate_input(text):
+    from copy import deepcopy
+
+    origin = ModelChoice(provider_id="anthropic", model_id="claude-sonnet-5-5")
+    target = ModelChoice(provider_id="anthropic", model_id="claude-haiku-5-5")
+    saved = ChatMessageAssistant(
+        content=text, tool_calls=[ToolCall(id="tool-one", function="lookup", arguments={})]
+    )
+    state = ProviderState(
+        **origin.model_dump(), data={"api": "anthropic", "message": saved.model_dump(mode="json")}
+    )
+    input = ModelInput(
+        messages=(
+            ChatMessageUser(content="request"),
+            saved.model_copy(update={"metadata": continuation_metadata(state)}),
+            ChatMessageTool(tool_call_id="tool-one", content="result"),
+        )
+    )
+    before = deepcopy(input)
+    transferred = provider_messages(input, target)
+    assert transferred[1].content == ([] if text == "" else text)
+    assert transferred[1].tool_calls == saved.tool_calls
+    assert transferred[1].metadata is None
+    assert transferred[2] == input.messages[2]
+    assert input == before
+    # Native continuation with the originating model remains byte-for-byte as saved.
+    assert provider_messages(input, origin)[1].model_dump(mode="json") == saved.model_dump(
+        mode="json"
+    )
+
+
+def test_transferred_tool_call_has_no_trailing_anthropic_prefill(monkeypatch):
+    """Catch placeholder text after a tool remembered at native position zero."""
+    import asyncio
+
+    from inspect_ai.model._providers.anthropic import assistant_internal, message_param
+
+    call = ToolCall(id="tool-switched", function="lookup", arguments={})
+    input = ModelInput(
+        messages=(
+            ChatMessageUser(content="request"),
+            ChatMessageAssistant(content="", tool_calls=[call]),
+            ChatMessageTool(tool_call_id=call.id, content="tool result"),
+        )
+    )
+    # Inspect retains this insertion position from a preceding tool-only response.
+    monkeypatch.setitem(assistant_internal().client_tool_call_positions, call.id, 0)
+    messages = provider_messages(
+        input, ModelChoice(provider_id="anthropic", model_id="claude-haiku-5-5")
+    )
+
+    async def serialize():
+        return [await message_param(message) for message in messages]
+
+    wire = asyncio.run(serialize())
+    assert wire[1]["content"] == [
+        {"type": "tool_use", "id": call.id, "name": call.function, "input": {}}
+    ]
+    assert wire[2]["role"] == "user"
+    assert wire[2]["content"][0]["type"] == "tool_result"
+    assert wire[2]["content"][0]["tool_use_id"] == call.id
+
+
 @pytest.mark.parametrize(
     "history",
     [
