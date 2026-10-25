@@ -26,8 +26,8 @@ decision model that gets the best answers at the lowest cost in the least time.
 
 ## How a round works
 
-1. A miner packages router code and weights and submits them with a registered hotkey.
-2. The evaluation service runs the router on the current benchmark. The router chooses which models to call. The service makes those calls, grades the final answer, and records the real cost and time.
+1. A miner packages trained router weights and inference code, then submits them with a registered hotkey.
+2. The service evaluates the router. Each model turn selects one provider, model and effort; the service forwards the original request, grades the response, and records cost and time.
 3. A challenger replaces the champion only when it clears the category gates and its net value is high enough. See [Scoring](docs/scoring.md).
 4. Validators read the published result and set on-chain weights: 85% to the current champion, 10% to the previous one, and 5% to the one before that.
 

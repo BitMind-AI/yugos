@@ -12,6 +12,64 @@ from yugos.inspect_engine import MemoryReceipts, RouterCall, SampleScope
 from yugos_evals.local.router import LocalRouter
 
 
+def test_worker_cannot_edit_provider_input_or_repair_a_truncated_reply(tmp_path):
+    from types import SimpleNamespace
+
+    import numpy as np
+    from safetensors.numpy import save_file
+
+    from yugos.miner import package
+    from yugos.submission.session import SubmissionSession, WorkerTimeouts
+    from yugos_evals.local.router import SubprocessWorker
+
+    source = tmp_path / "source"
+    source.mkdir()
+    choice = ModelChoice(provider_id="fixture", model_id="model")
+    (source / "model.py").write_text("""
+class Router:
+    def route(self, request):
+        request.messages[0].content = 'worker-edited prompt'
+        return {'provider_id': 'fixture', 'model_id': 'model'}
+def load_model(weights_path):
+    return Router()
+""")
+    save_file({"weight": np.ones(1)}, source / "model.safetensors")
+    archive = tmp_path / "router.zip"
+    metadata = package(source, archive, name="mutation-fixture", required_models=(choice,))
+    worker = SubprocessWorker(archive, tmp_path / "runtime", log=tmp_path / "worker.log")
+    session = SubmissionSession(worker, frozenset([choice]), WorkerTimeouts())
+    requests = []
+
+    def complete(request):
+        requests.append(request)
+        return ModelResponse(
+            text="unfinished answer", cost_usd=0.01, latency_s=0, finish_reason="length"
+        )
+
+    router = LocalRouter(
+        session=session,
+        run_id="local",
+        router_client=SimpleNamespace(quote=lambda r: 0.01, complete=complete),
+        limits=CallLimits(max_cost_usd=1, max_question_cost_usd=1),
+        receipts=MemoryReceipts(),
+    )
+    request = ModelInput.from_text("original request")
+    call = RouterCall(
+        submission_id="test",
+        scope=SampleScope(sample_uuid="uuid", sample_id="q", epoch=1, eval_id="eval"),
+        request=request,
+    )
+    try:
+        session.load(metadata.submission_sha256, metadata.manifest_sha256)
+        response = router._generate(call, [False])
+        assert response.finish_reason == "length"
+        assert len(requests) == 1
+        assert requests[0].input == request
+        assert request.messages[0].content == "original request"
+    finally:
+        assert session.close().reaped
+
+
 @pytest.mark.parametrize("service_first", [False, True])
 @pytest.mark.parametrize(
     "cap,error,match",

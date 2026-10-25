@@ -12,7 +12,7 @@ curl -s https://upload.yugos.ai/world/cards/active \
 ```
 
 Each line is `provider_id` then `model_id`. Those two strings are what
-`models.json` and each `solve` call must use. Prices are USD per million
+`models.json` and each `route` call must use. Prices are USD per million
 tokens under `token_prices`. The card changes as providers change their
 prices. The response includes `sha256` for the card you just read.
 
@@ -30,7 +30,7 @@ They are not extra models your router should declare.
 ```
 
 `effort` may be `null`. A non-null effort is a different choice and must be
-repeated in `models.json` if `solve` can yield it. Duplicate choices are
+repeated in `models.json` if `route` can return it. Duplicate choices are
 rejected.
 
 The known provider ids are `openai`, `anthropic`, `google`, `openrouter`,

@@ -25,6 +25,7 @@ from yugos.submission.bundle import (
     _safe_member,
     inspect_bundle,
 )
+from yugos.submission.protocol import ROUTING_RUNTIME
 
 from .display import Activity as _Heartbeat
 from .display import (
@@ -141,7 +142,7 @@ def package(
                 hashes[filename] = digest.hexdigest()
             manifest = BundleManifest(
                 name=name,
-                runtime="python-safetensors-v2",
+                runtime=ROUTING_RUNTIME,
                 required_models=required_models,
                 files=hashes,
             )

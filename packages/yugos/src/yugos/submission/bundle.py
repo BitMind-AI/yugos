@@ -14,9 +14,15 @@ from pydantic import Field, model_validator
 
 from yugos.inference.actions import RequiredModels
 
-from .protocol import Digest, Failure, PreparedMetadata, StrictModel
+from .protocol import (
+    Digest,
+    Failure,
+    PreparedMetadata,
+    StrictModel,
+    SubmissionRuntime,
+)
 
-BUNDLE_SCHEMA = "yugos.bundle.v3"
+BUNDLE_SCHEMA = "yugos.bundle.v4"
 MAX_BUNDLE_BYTES = 24 * 1024 * 1024 * 1024
 MAX_EXPANDED_BYTES = MAX_BUNDLE_BYTES
 MAX_MEMBERS = 4096
@@ -25,12 +31,12 @@ MAX_PARAMETERS = 10_000_000_000
 
 
 class BundleManifest(StrictModel):
-    """All model files are committed; the worker loads model.py with safetensors weights."""
+    """Packaged inference code and trained weights."""
 
     schema_name: Literal[BUNDLE_SCHEMA] = Field(alias="schema", default=BUNDLE_SCHEMA)
     name: str = Field(min_length=1, max_length=256)
     version: str = Field(default="0.1.0", min_length=1, max_length=128)
-    runtime: Literal["python-safetensors-v2"]
+    runtime: SubmissionRuntime
     files: dict[str, Digest] = Field(min_length=2)
     required_models: RequiredModels
 
@@ -143,6 +149,7 @@ def inspect_bundle(source: Path) -> PreparedMetadata:
         manifest_sha256=hashlib.sha256(raw).hexdigest(),
         name=manifest.name,
         version=manifest.version,
+        runtime=manifest.runtime,
         required_models=manifest.required_models,
     )
 
@@ -236,6 +243,7 @@ def prepare_bundle(
             manifest_sha256=actual_manifest,
             name=manifest.name,
             version=manifest.version,
+            runtime=manifest.runtime,
             required_models=manifest.required_models,
         ),
     )

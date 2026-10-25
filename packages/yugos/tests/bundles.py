@@ -19,14 +19,12 @@ class Router:
     def __init__(self, weights):
         self.weights = weights
 
-    def solve(self, input):
+    def route(self, input):
         prompt = input.messages[-1].content
         words = re.findall(r"[a-z]+", prompt.lower())
         features = np.array([words.count(word) for word in ("equation", "python", "function")])
         choice = int(np.argmax(features @ self.weights))
-        reply = yield {"kind": "call", "model": {"provider_id": "fixture", "model_id": ("math-model", "code-model")[choice]}, "input": input}
-        if reply.finish_reason == "length":
-            yield {"kind": "call", "model": {"provider_id": "fixture", "model_id": "general"}, "input": {"messages": [{"role": "user", "content": "Finish " + prompt + "\\nDraft:\\n" + reply.text}]}}
+        return {"provider_id": "fixture", "model_id": ("math-model", "code-model")[choice]}
 
 def load_model(weights_path):
     return Router(load_file(weights_path)["weights"])
@@ -67,9 +65,9 @@ def make_bundle(
         "model.safetensors": save({"weights": weights}) if weights_data is None else weights_data,
     }
     manifest = {
-        "schema": "yugos.bundle.v3",
+        "schema": "yugos.bundle.v4",
         "name": "trained-fixture",
-        "runtime": "python-safetensors-v2",
+        "runtime": "python-safetensors-route-v1",
         "required_models": [
             MODEL,
             {"provider_id": "fixture", "model_id": "math-model"},

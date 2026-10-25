@@ -7,8 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from yugos.inference.actions import CallOutput, ModelChoice
+from yugos.inference.actions import ModelChoice
 from yugos.inference.chat import ModelInput
+from yugos.submission.protocol import ROUTING_RUNTIME
 from yugos.submission.session import (
     CleanupReport,
     RequestState,
@@ -45,6 +46,7 @@ class Worker:
                     "submission_sha256": request["submission_sha256"],
                     "manifest_sha256": "b" * 64,
                     "name": "fixture",
+                    "runtime": ROUTING_RUNTIME,
                     "version": "1",
                     "required_models": [MODEL.model_dump()],
                 },
@@ -54,15 +56,7 @@ class Worker:
         elif request["kind"] == "shutdown":
             reply.update(kind="stopped")
         else:
-            reply.update(kind="finished", request_id=request["request_id"])
-            if request["kind"] == "solve":
-                reply.update(
-                    kind="call_requested",
-                    action={
-                        "model": MODEL.model_dump(),
-                        "input": INPUT.model_dump(mode="json"),
-                    },
-                )
+            reply.update(kind="routed", request_id=request["request_id"], model=MODEL.model_dump())
         return json.dumps(reply) + "\n"
 
     def close(self, *, timeout_s):
@@ -76,7 +70,7 @@ def test_concurrent_decision_clock_excludes_waiting_for_another_request(monkeypa
         SimpleNamespace(monotonic_ns=lambda: clock[0], monotonic=lambda: clock[0] / 1e9),
     )
     worker = Worker()
-    session = SubmissionSession(worker, frozenset([MODEL]), WorkerTimeouts(), max_active_requests=2)
+    session = SubmissionSession(worker, frozenset([MODEL]), WorkerTimeouts())
     session.load("a" * 64, None)
     entered, queued, release = Event(), Event(), Event()
     lock = RLock()
@@ -96,7 +90,7 @@ def test_concurrent_decision_clock_excludes_waiting_for_another_request(monkeypa
 
     def decision(raw, **kwargs):
         request = json.loads(raw)
-        if request["kind"] == "solve":
+        if request["kind"] == "route":
             if request["request_id"] == "slow":
                 first_thread.append(current_thread())
                 entered.set()
@@ -108,9 +102,9 @@ def test_concurrent_decision_clock_excludes_waiting_for_another_request(monkeypa
 
     worker.exchange = decision
     with ThreadPoolExecutor(2) as pool:
-        slow = pool.submit(session.solve, INPUT, "slow", timeout_s=60)
+        slow = pool.submit(session.route, INPUT, "slow", timeout_s=60)
         assert entered.wait(timeout=5)
-        fast = pool.submit(session.solve, INPUT, "fast", timeout_s=60)
+        fast = pool.submit(session.route, INPUT, "fast", timeout_s=60)
         try:
             assert queued.wait(timeout=5)
         finally:
@@ -119,64 +113,31 @@ def test_concurrent_decision_clock_excludes_waiting_for_another_request(monkeypa
         fast.result(timeout=5)
     assert session.request_outcome("slow").decision_time_ns == 30_000_000_000
     assert session.request_outcome("fast").decision_time_ns == 2_000_000_000
-    session.resume(CallOutput(text="answer", finish_reason="stop"), request_id="fast", timeout_s=10)
-    session.cancel("slow")
     session.close()
     assert session.request_outcome("fast").decision_time_ns == 2_000_000_000
     assert session.request_outcome("slow").decision_time_ns == 30_000_000_000
 
 
-@pytest.mark.parametrize("phase", ["solve", "resume", "cancel"])
 @pytest.mark.parametrize("failure", ["protocol", "transport"])
-def test_session_exit_distinguishes_the_origin_from_active_and_queued_requests(phase, failure):
+def test_session_exit_preserves_completed_and_interrupts_queued_requests(failure):
     worker = Worker()
-    session = SubmissionSession(worker, frozenset([MODEL]), WorkerTimeouts(), max_active_requests=4)
+    session = SubmissionSession(worker, frozenset([MODEL]), WorkerTimeouts())
     session.load("a" * 64, None)
-    session.solve(INPUT, "healthy", timeout_s=10)
-    session.resume(
-        CallOutput(text="answer", finish_reason="stop"), request_id="healthy", timeout_s=10
-    )
-    session.solve(INPUT, "active", timeout_s=10)
-    if phase != "solve":
-        session.solve(INPUT, "fault", timeout_s=10)
-    worker.failure = phase, failure
+    session.route(INPUT, "healthy", timeout_s=10)
+    worker.failure = "route", failure
     with pytest.raises(SessionError) as caught:
-        if phase == "solve":
-            session.solve(INPUT, "fault", timeout_s=10)
-        elif phase == "resume":
-            session.resume(
-                CallOutput(text="answer", finish_reason="stop"), request_id="fault", timeout_s=10
-            )
-        else:
-            session.cancel("fault")
+        session.route(INPUT, "fault", timeout_s=10)
     error = caught.value
     assert error.outcome.request_id == "fault"
     assert error.outcome.state == (
         RequestState.FAILED if failure == "protocol" else RequestState.INTERRUPTED
     )
     assert error.owner == ("submission" if failure == "protocol" else "infrastructure")
-    assert session.session_exit.failure.request_id == "fault"
     assert session.request_outcome("healthy").state == RequestState.COMPLETED
-    assert session.request_outcome("active").state == RequestState.INTERRUPTED
     sent = len(worker.sent)
     with pytest.raises(SessionError) as queued:
-        session.solve(INPUT, "queued", timeout_s=10)
+        session.route(INPUT, "queued", timeout_s=10)
     assert len(worker.sent) == sent
     assert queued.value.outcome.state == RequestState.INTERRUPTED
     assert queued.value.outcome.session_exit == error.outcome.session_exit
     assert queued.value.owner == error.owner
-
-
-def test_finished_and_cancelled_requests_survive_session_close():
-    worker = Worker()
-    session = SubmissionSession(worker, frozenset([MODEL]), WorkerTimeouts())
-    session.load("a" * 64, None)
-    session.solve(INPUT, "completed", timeout_s=10)
-    session.resume(
-        CallOutput(text="answer", finish_reason="stop"), request_id="completed", timeout_s=10
-    )
-    session.solve(INPUT, "cancelled", timeout_s=10)
-    session.cancel("cancelled")
-    session.close()
-    assert session.request_outcome("completed").state == RequestState.COMPLETED
-    assert session.request_outcome("cancelled").state == RequestState.CANCELLED

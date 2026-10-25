@@ -5179,7 +5179,7 @@ wheels = [
 
 [[package]]
 name = "yugos"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "bittensor" },
@@ -5242,7 +5242,7 @@ dev = [
 
 [[package]]
 name = "yugos-evals"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/yugos-evals" }
 dependencies = [
     { name = "httpx" },

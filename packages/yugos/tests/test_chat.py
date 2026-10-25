@@ -10,7 +10,7 @@ from inspect_ai.model import (
 from inspect_ai.tool import ToolInfo
 from pydantic import ValidationError
 
-from yugos.inference.actions import CallAction, CallOutput, ModelChoice
+from yugos.inference.actions import CallAction, ModelChoice
 from yugos.inference.chat import (
     ModelInput,
     ProviderState,
@@ -18,7 +18,7 @@ from yugos.inference.chat import (
     continuation_metadata,
     provider_messages,
 )
-from yugos.submission.protocol import CallRequested, Resume, decode_line, encode_line
+from yugos.submission.protocol import Route, Routed, decode_line, encode_line
 
 
 def test_worker_wire_preserves_tools_state_and_matching_results():
@@ -38,14 +38,7 @@ def test_worker_wire_preserves_tools_state_and_matching_results():
         response_format="json_object",
     )
     fields = dict(session_id="a" * 32, sequence=1, request_id="r")
-    action = CallRequested(**fields, action=CallAction(model=model, input=input))
-    reply = Resume(
-        **fields,
-        output=CallOutput(
-            text="", finish_reason="tool_calls", tool_calls=calls, provider_state=state
-        ),
-    )
-    for message in (action, reply):
+    for message in (Route(**fields, input=input), Routed(**fields, model=model)):
         assert decode_line(encode_line(message)) == message
 
 
@@ -148,13 +141,8 @@ def test_native_named_tool_and_generation_config_survive_worker_wire():
             ),
         ),
     )
-    action = CallRequested(
-        session_id="a" * 32,
-        sequence=1,
-        request_id="r",
-        action=CallAction(model=ModelChoice(provider_id="fixture", model_id="judge"), input=input),
-    )
-    restored = decode_line(encode_line(action)).action.input
+    action = Route(session_id="a" * 32, sequence=1, request_id="r", input=input)
+    restored = decode_line(encode_line(action)).input
     assert restored == input
     assert isinstance(restored.messages[0], ChatMessageUser)
     assert isinstance(restored.tools[0], ToolInfo)

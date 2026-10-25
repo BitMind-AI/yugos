@@ -588,7 +588,7 @@ for name in ('bittensor', 'brr', 'torch', 'modal'):
         assert (
             archive.read("tokenizer/vocab.json") == (source / "tokenizer/vocab.json").read_bytes()
         )
-    assert manifest["schema"] == "yugos.bundle.v3"
+    assert manifest["schema"] == "yugos.bundle.v4"
     assert manifest["name"] == source.name
     assert manifest["required_models"] == models and "fallback" not in manifest
     assert inspect_bundle(output).required_models == tuple(ModelChoice(**m) for m in models)
