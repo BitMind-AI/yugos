@@ -155,9 +155,10 @@ def prepare_task(task: Task, **options):
     if name.startswith("inspect_evals/tau2_"):
         options["required_roles"] = tuple(set(options.get("required_roles", ())) | {"user"})
     if name == "inspect_evals/bigcodebench":
-        from yugos_evals.scorers.python_unittest import bigcodebench_scorer
+        from yugos_evals.scorers.python_unittest import GRADER_VERSION, bigcodebench_scorer
 
         task.scorer = [bigcodebench_scorer()]
+        task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
     if name == "inspect_evals/math":
         # Upstream also builds a model equivalence scorer. Inspect would run it,
         # sending the gold target to the model under evaluation. Keep the
