@@ -39,8 +39,28 @@ Tasks Yugos maintains because Inspect Evals does not:
 | `yugos_evals/math_answer` | ArXivMath, LiveMathBench |
 | `yugos_evals/code_tests` | LiveCodeBench v6 additions, LiveCodeBench-Plus |
 | `yugos_evals/pairwise_judge` | Arena-Hard v2.0 |
+| `yugos_evals/reading` | Belebele, LongBench v2, HotpotQA distractor validation |
+| `yugos_evals/cruxeval` | CRUXEval output prediction |
 
-AppWorld and Terminal-Bench 2.0 are `planned`.
+AppWorld and Terminal-Bench are `planned`; Terminal-Bench 4.0 needs a separate
+verifier environment and longer hosted invocations.
+
+Reading sources are pinned to dataset commits. LongBench retains complete
+contexts and uses the published answer extraction from
+[LongBench](https://github.com/THUDM/LongBench). HotpotQA retains answer,
+supporting-fact and joint metrics from the
+[official evaluation contract](https://github.com/hotpotqa/hotpot/blob/master/hotpot_evaluate_v1.py);
+the catalog scores joint F1. Belebele metadata records a master question identity
+shared across translations, allowing a private selector to exclude translated
+duplicates. The package does not impose competition sampling quotas.
+
+CRUXEval uses a single output expression, without the upstream few-shot or CoT
+prompt. It preserves Python value equality and the
+[official exclusion of the given function call](https://github.com/facebookresearch/cruxeval/blob/main/evaluation/utils_general.py).
+Only expressions are accepted; statements appended to an expression are invalid.
+The shared isolated Python supervisor keeps gold assertions outside the
+candidate process. Its image needs `pyarrow` and `rpyc`; candidate code is never
+evaluated on the preparation host.
 
 ## Run a router locally
 
