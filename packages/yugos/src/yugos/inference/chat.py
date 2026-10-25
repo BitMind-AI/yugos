@@ -114,7 +114,16 @@ def provider_messages(input: ModelInput, model) -> list[ChatMessage]:
                 raise ValueError("continuation differs from assistant message")
             messages.append(saved)
         else:
-            messages.append(message.model_copy(deep=True, update={"metadata": None}))
+            updates = {"metadata": None}
+            if (
+                isinstance(message, ChatMessageAssistant)
+                and message.tool_calls
+                and message.content == ""
+            ):
+                # An empty string makes Inspect insert placeholder text, which
+                # can land after a transferred tool call and become a prefill.
+                updates["content"] = []
+            messages.append(message.model_copy(deep=True, update=updates))
     return messages
 
 
