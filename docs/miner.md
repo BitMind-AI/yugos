@@ -152,6 +152,19 @@ The archive must stay within 24 GiB and 4,096 files. `yugos pack` skips hidden
 files, caches, other ZIPs, and `*.receipt.json`. It rejects symlinks. It writes
 `manifest.json` itself.
 
+## Enforcement and eligibility
+
+The worker validates the bundle format, submission interface and returned model
+choice. The host constructs provider calls from the original request.
+
+Weight-driven routing and independence from other samples are competition
+eligibility requirements. Successful packaging or local evaluation does not
+establish compliance with those requirements.
+
+Hosted submissions must pass a compliance review before competitive evaluation.
+The review assesses whether submitted code and inference assets satisfy the
+routing requirements.
+
 ## Test locally first
 
 Local runs use your router and public tasks on your machine. They are not
