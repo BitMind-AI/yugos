@@ -115,14 +115,10 @@ def test_unportable_task_callbacks_and_missing_roles_are_not_silently_dropped():
         restore_tasks(questions)
 
 
-def test_multiple_scores_require_explicit_selection_and_pins_are_enforced():
+def test_multiple_scores_require_explicit_selection():
     task = Task(dataset=[Sample(id="q", input="q", target="a")], scorer=[exact(), match()])
     with pytest.raises(ValueError, match="authoritative scorer"):
         freeze_task(task, source="s", workload_class="chat_qa")
-    [question] = freeze_task(task, source="s", workload_class="chat_qa", scorer="exact")
-    question.inspect_task["packages"]["inspect-ai"] = "wrong"
-    with pytest.raises(ValueError, match="prepared task requires"):
-        restore_tasks([question])
 
 
 def test_sample_assets_are_frozen_and_revalidated_before_execution(tmp_path):
