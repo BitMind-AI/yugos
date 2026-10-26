@@ -306,6 +306,16 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
     _upstream(
         "tau2_telecom", "agentic", args={"shuffle": False}, role_pins=_TAU2_PINS, notes=_TAU2
     ),
+    _upstream(
+        "agentdojo",
+        "agentic",
+        args={
+            "with_injections": False,
+            "with_sandbox_tasks": "no",
+            "workspace": ["banking", "slack", "travel", "workspace"],
+        },
+        notes="Utility tasks only: simulated tools, no prompt injections and no sandbox.",
+    ),
     # Not in Inspect Evals; native yugos_evals tasks with public source loaders.
     _native(
         "arxivmath",

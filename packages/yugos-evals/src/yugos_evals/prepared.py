@@ -59,6 +59,7 @@ _MODULES = {
     "inspect_evals/swe_bench_verified_mini": "inspect_evals.swe_bench.swe_bench",
     "inspect_evals/simpleqa_verified": "inspect_evals.simpleqa.simpleqa",
     "inspect_evals/agent_bench_os": "inspect_evals.agent_bench.agent_bench",
+    "inspect_evals/agentdojo": "inspect_evals.agentdojo.agentdojo",
     **{
         f"inspect_evals/aime{year}": f"inspect_evals.aime{year}.aime{year}"
         for year in (2024, 2025, 2026)
@@ -96,6 +97,7 @@ _CUSTOM_COMPONENTS = {
     "inspect_evals/bbeh",
     "inspect_evals/ds1000",
     "inspect_evals/agent_bench_os",
+    "inspect_evals/agentdojo",
 }
 
 
@@ -390,6 +392,15 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
             raise ValueError("custom AgentBench components need their own installed builder")
         solver = as_solver(module.default_agent(args.get("max_attempts", 1)))
         scorer = module.agent_bench_os_default_scorer()
+    elif name == "agentdojo":
+        if args.get("with_injections") or args.get("agent", "default") != "default":
+            raise ValueError("AgentDojo is prepared as utility tasks with its default agent")
+        from inspect_evals.agentdojo.agents.agent import get_agent
+        from inspect_evals.agentdojo.dataset import setup_environment
+        from inspect_evals.agentdojo.scorer import user_task_scorer
+
+        solver = [setup_environment(injections=""), get_agent(agent="default")]
+        scorer = user_task_scorer()
     elif name == "bfcl":
         solver, scorer = module.bfcl_solver(), module.bfcl_scorer()
     elif name in {"swe_bench", "swe_bench_verified_mini"}:

@@ -687,3 +687,31 @@ def test_agentbench_restores_native_submission_and_match_grading(
         assert len(seen) == 1 and "private answer" not in str(seen[0].messages)
         requests.append(seen[0])
     assert requests[0] == requests[1]
+
+
+def test_agentdojo_utility_tasks_restore_native_setup_tools_and_scoring(tmp_path):
+    native = load_task(entry("agentdojo"))
+    assert len(native.dataset) == 96 and not any(s.sandbox for s in native.dataset)
+    frozen = freeze_entry(entry("agentdojo"), task=native, sample_ids=["banking-u0"])
+    [(prepared, _)] = restore_tasks(frozen)
+    requests = []
+    for label, task in [("native", native_one(native, "banking-u0")), ("prepared", prepared)]:
+        seen = []
+
+        async def reply(call):
+            seen.append(call.request)
+            return RouterReply(content="I cannot help with that.", finish_reason="stop")
+
+        log = run(task, reply, tmp_path / label)
+        assert log.status == "success"
+        assert next(iter(log.samples[0].scores.values())).value == {"utility": "I"}
+        assert seen and seen[0].tools, "the suite's tools are offered to the model"
+        requests.append(seen[0])
+    assert requests[0].tools == requests[1].tools
+    assert requests[0].messages == requests[1].messages
+
+
+def native_one(task, sample_id):
+    from inspect_ai import task_with
+
+    return task_with(task, dataset=MemoryDataset([s for s in task.dataset if s.id == sample_id]))
