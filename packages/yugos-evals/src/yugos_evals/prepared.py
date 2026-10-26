@@ -46,6 +46,11 @@ _MODULES = {
             "humaneval",
             "mbpp",
             "math",
+            "paws",
+            "worldsense",
+            "pubmedqa",
+            "bbeh",
+            "ds1000",
         )
     },
     "inspect_evals/gpqa_diamond": "inspect_evals.gpqa.gpqa",
@@ -53,6 +58,7 @@ _MODULES = {
     "inspect_evals/arc_easy": "inspect_evals.arc.arc",
     "inspect_evals/swe_bench_verified_mini": "inspect_evals.swe_bench.swe_bench",
     "inspect_evals/simpleqa_verified": "inspect_evals.simpleqa.simpleqa",
+    "inspect_evals/agent_bench_os": "inspect_evals.agent_bench.agent_bench",
     **{
         f"inspect_evals/aime{year}": f"inspect_evals.aime{year}.aime{year}"
         for year in (2024, 2025, 2026)
@@ -63,7 +69,15 @@ _MODULES = {
     },
     **{
         f"yugos_evals/{name}": f"yugos_evals.tasks.{name}"
-        for name in ("math_answer", "code_tests", "pairwise_judge", "rubric_chat", "boxed_math")
+        for name in (
+            "math_answer",
+            "code_tests",
+            "pairwise_judge",
+            "rubric_chat",
+            "boxed_math",
+            "reading",
+            "cruxeval",
+        )
     },
 }
 
@@ -72,11 +86,16 @@ _RESTORED_METRICS = {
     "inspect_evals/squad",
     "inspect_evals/drop",
     "inspect_evals/race_h",
+    "inspect_evals/worldsense",
+    "inspect_evals/bbeh",
 }
 _CUSTOM_COMPONENTS = {
     "inspect_evals/bigcodebench",
     "inspect_evals/swe_bench",
     "inspect_evals/swe_bench_verified_mini",
+    "inspect_evals/bbeh",
+    "inspect_evals/ds1000",
+    "inspect_evals/agent_bench_os",
 }
 
 
@@ -136,9 +155,10 @@ def prepare_task(task: Task, **options):
     if name.startswith("inspect_evals/tau2_"):
         options["required_roles"] = tuple(set(options.get("required_roles", ())) | {"user"})
     if name == "inspect_evals/bigcodebench":
-        from yugos_evals.scorers.python_unittest import bigcodebench_scorer
+        from yugos_evals.scorers.python_unittest import GRADER_VERSION, bigcodebench_scorer
 
         task.scorer = [bigcodebench_scorer()]
+        task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
     if name == "inspect_evals/math":
         # Upstream also builds a model equivalence scorer. Inspect would run it,
         # sending the gold target to the model under evaluation. Keep the
@@ -207,6 +227,26 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         solver, scorer = multiple_choice(), choice()
     elif name == "boolq":
         solver, scorer = [generate()], pattern(r"\A[\W_]*(Yes|No)[\W_]*\Z")
+    elif name == "paws":
+        solver = [prompt_template(template=module.TEMPLATE), generate()]
+        scorer = pattern(r"\A\W*\b(Yes|No)\b\W*\Z")
+    elif name == "pubmedqa":
+        solver, scorer = [multiple_choice(template=module.TEMPLATE)], choice()
+    elif name == "worldsense":
+        scorer = module.pattern_with_metadata(
+            r"^\(?\s*(1|2|3|TRUE|FALSE|IMPOSSIBLE|POSSIBLE)\s*\)?"
+        )
+        metrics = [accuracy(), stderr(), module.ws_accuracy(), module.ws_bias()]
+    elif name == "bbeh":
+        from inspect_ai.scorer import grouped
+
+        if args.get("solver"):
+            raise ValueError("custom BBEH components need their own installed builder")
+        scorer = module.bbeh_scorer()
+        metrics = [
+            grouped(accuracy(), group_key="task", all=False),
+            module.harmonic_mean_across_tasks(),
+        ]
     elif name == "squad":
         solver = [system_message(module.SYSTEM_MESSAGE), generate()]
         scorer = [f1(), exact()]
@@ -343,6 +383,13 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         from yugos_evals.scorers.python_unittest import bigcodebench_scorer
 
         scorer = bigcodebench_scorer()
+    elif name == "ds1000":
+        solver, scorer = module.ds1000_solver(), module.ds1000_scorer()
+    elif name == "agent_bench_os":
+        if args.get("solver") or args.get("sandbox_config"):
+            raise ValueError("custom AgentBench components need their own installed builder")
+        solver = as_solver(module.default_agent(args.get("max_attempts", 1)))
+        scorer = module.agent_bench_os_default_scorer()
     elif name == "bfcl":
         solver, scorer = module.bfcl_solver(), module.bfcl_scorer()
     elif name in {"swe_bench", "swe_bench_verified_mini"}:
@@ -371,6 +418,10 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         scorer = getattr(module, f"{domain}_scorer")()
     elif name == "math_answer":
         scorer = module.math_answer_scorer()
+    elif name == "reading":
+        solver, scorer = module.reading_components(args.get("source", "belebele"))
+    elif name == "cruxeval":
+        scorer = module.cruxeval_output_scorer()
     elif name == "code_tests":
         scorer = module.code_tests_scorer()
     elif name == "pairwise_judge":

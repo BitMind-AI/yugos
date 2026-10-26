@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from importlib.resources import files
 
@@ -17,6 +18,19 @@ from ._outcome import Outcome, completion_gate, to_score
 
 RUNNER = files(__package__).joinpath("python_unittest_runner.py").read_text(encoding="utf-8")
 VERIFY_TIMEOUT = 180  # Each trusted test invokes the candidate in a separate process.
+GRADER_VERSION = 2
+
+
+def library_names(value) -> tuple[str, ...]:
+    """Accept the native dataset's list or its Python-list string representation."""
+    if isinstance(value, str):
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError("BigCodeBench libraries must be a list of names") from exc
+    if not isinstance(value, (tuple, list)) or not all(isinstance(v, str) for v in value):
+        raise ValueError("BigCodeBench libraries must be a list of names")
+    return tuple(value)
 
 
 async def grade_unittest(
@@ -26,6 +40,8 @@ async def grade_unittest(
     *,
     timeout_s: int = VERIFY_TIMEOUT,
     libs: tuple[str, ...] = (),
+    reference: str = "",
+    http_fixtures: dict | None = None,
 ) -> Outcome:
     try:
         env.as_type(LocalSandboxEnvironment)
@@ -42,6 +58,8 @@ async def grade_unittest(
         "tests": tests,
         "timeout_s": max(1, timeout_s - 5),
         "libs": libs,
+        "reference": reference,
+        "http_fixtures": http_fixtures or {},
         "worker_source": RUNNER,
     }
     try:
@@ -97,7 +115,12 @@ def bigcodebench_scorer() -> Scorer:
             )
         return to_score(
             await grade_unittest(
-                sandbox(), candidate, tests, libs=tuple(state.metadata.get("libs", ()))
+                sandbox(),
+                candidate,
+                tests,
+                libs=library_names(state.metadata.get("libs", ())),
+                reference=target.text,
+                http_fixtures=state.metadata.get("http_fixtures"),
             )
         )
 
