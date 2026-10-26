@@ -1,14 +1,17 @@
 # Starter router
 
-Example miner submission. Nothing in the Yugos package imports this directory.
+Fixed-model baseline for checking packaging and local evaluation. Nothing in the
+Yugos package imports this directory. It does not train a router; replace its
+constant choice with learned inference before competitive submission.
 
-Every question calls OpenRouter `openai/gpt-5-nano`, a cheap model on the
-active world card. A local run needs `OPENROUTER_API_KEY`. The hosted service
-uses its own key.
+Every model turn selects OpenRouter `openai/gpt-5-nano`. Verify that the choice
+in `models.json` is supported by your world card. A local run needs
+`OPENROUTER_API_KEY` and NumPy (`uv pip install numpy`).
 
-- `model.py` loads `model.safetensors` and yields that one call from `solve`.
+- `model.py` validates `model.safetensors` and returns one `ModelChoice` from `route`.
 - `models.json` lists the same model.
-- `model.safetensors` is the required weights file. This starter does not read it.
+- `model.safetensors` supplies the required asset layout; it does not drive this
+  baseline's fixed choice.
 
 Pack it from this directory:
 

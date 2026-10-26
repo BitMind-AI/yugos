@@ -3,6 +3,7 @@ import stat
 import subprocess
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 from bundles import MODEL_SOURCE, make_bundle
@@ -179,8 +180,37 @@ def test_commitment_mismatch_is_terminal_before_load(tmp_path, which):
     assert responses[0].failure.code == "preparation.digest_mismatch"
 
 
-def test_worker_cli_loads_the_trusted_model_fixture(tmp_path):
+@pytest.mark.parametrize("starter", [False, True], ids=["fixture", "starter"])
+def test_worker_cli_loads_packaged_router(tmp_path, starter):
     archive, messages = conversation(tmp_path)
+    if starter:
+        # Exercise the published example unchanged: stale solve() code must fail.
+        source = Path(__file__).resolve().parents[3] / "examples/starter-router"
+        archive = tmp_path / "starter.zip"
+        packed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-m",
+                "yugos.miner",
+                "pack",
+                str(source),
+                "--output",
+                str(archive),
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert packed.returncode == 0, packed.stderr
+        metadata = bundle.inspect_bundle(archive)
+        messages[0] = messages[0].model_copy(
+            update={
+                "submission_sha256": metadata.submission_sha256,
+                "expected_manifest_sha256": metadata.manifest_sha256,
+            }
+        )
     completed = subprocess.run(
         [
             sys.executable,
@@ -190,6 +220,7 @@ def test_worker_cli_loads_the_trusted_model_fixture(tmp_path):
             str(archive),
             str(tmp_path / "runtime"),
         ],
+        cwd=tmp_path,
         input="".join(encode_line(m) for m in messages),
         capture_output=True,
         text=True,
@@ -197,8 +228,13 @@ def test_worker_cli_loads_the_trusted_model_fixture(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
     responses = [decode_line(line) for line in completed.stdout.splitlines(keepends=True)]
-    assert responses[2].model.model_id == "math-model"
-    assert isinstance(responses[-1], Stopped)
+    assert [type(m) for m in responses] == [Prepared, Loaded, Routed, Routed, Stopped]
+    if starter:
+        choices = [m.model for m in responses if isinstance(m, Routed)]
+        assert all(choice in metadata.required_models for choice in choices)
+        assert len(set(choices)) == 1
+    else:
+        assert responses[2].model.model_id == "math-model"
 
 
 @pytest.mark.parametrize(

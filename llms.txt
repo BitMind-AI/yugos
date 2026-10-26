@@ -17,7 +17,9 @@ editing, voting, escalation or answer repair. Generic preprocessing and output
 decoding are allowed; benchmark detectors, keyword rules and decorative weights
 are not.
 
-Read [docs/miner.md](docs/miner.md) for the full submission contract.
+The starter is a fixed-model local baseline. Replace its constant choice with
+learned inference before competitive submission. Read [docs/miner.md](docs/miner.md)
+for the full submission contract.
 
 ## The score you are fitting
 
@@ -113,5 +115,5 @@ yugos status router.receipt.json --wallet miner --hotkey default
 - [Start mining](docs/miner.md): install, register, pack, and submit.
 - [Scoring and emissions](docs/scoring.md): the full net-value equation, gates, and the 85/10/5 split.
 - [Providers and models](docs/models.md): the world card and the API-key names.
-- [Starter router](examples/starter-router): a working three-file submission.
+- [Starter router](examples/starter-router): a fixed-model baseline for local checks.
 - [Local evaluation](packages/yugos-evals/README.md#local-evaluation): pack build, run, compare, and spend caps.
