@@ -188,6 +188,26 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
     _upstream("commonsense_qa", "chat_qa", args={"shuffle": False}),
     _upstream("bbh", "chat_qa", notes="Select and record each BBH subset explicitly."),
     _upstream("medqa", "chat_qa"),
+    _upstream("paws", "chat_qa", args={"shuffle": False}),
+    _upstream("worldsense", "chat_qa", args={"shuffle": False}),
+    _upstream("pubmedqa", "chat_qa"),
+    _upstream("bbeh", "chat_qa"),
+    _native("belebele", "chat_qa", "reading", args={"source": "belebele"}),
+    _native(
+        "longbench_v2",
+        "chat_qa",
+        "reading",
+        args={"source": "longbench_v2", "lengths": ["short"]},
+        notes="Complete fixed contexts; no model-dependent truncation.",
+    ),
+    _native(
+        "hotpotqa",
+        "chat_qa",
+        "reading",
+        args={"source": "hotpotqa"},
+        score_key="joint_f1",
+        notes="Labeled distractor validation; joint answer/evidence F1 is authoritative.",
+    ),
     _upstream("simpleqa_verified", "chat_qa", role_pins={"grader": _GRADER}),
     _upstream("boolq", "chat_qa", args={"shuffle": False}),
     _upstream(
@@ -214,8 +234,9 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
     _upstream(
         "bigcodebench",
         "math_code",
-        notes=f"Confirm the Instruct variant; keep the 1120/1121 duplicate exclusion. {_SANDBOX}",
+        notes=f"Complete variant at v0.1.2; keep the 1120/1121 duplicate exclusion. {_SANDBOX}",
     ),
+    _upstream("ds1000", "math_code", args={"shuffle": False}, notes=_SANDBOX),
     _upstream(
         "humaneval",
         "math_code",
@@ -241,6 +262,12 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
         ),
     ),
     # Agentic
+    _upstream(
+        "agent_bench_os",
+        "agentic",
+        args={"split": "test", "max_attempts": 1},
+        notes=f"Per-task initialization and private checks require prepared environments. {_SANDBOX}",
+    ),
     _upstream(
         "bfcl",
         "agentic",
@@ -296,6 +323,19 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
         "math_answer",
         args={"source": "livemathbench", "subsets": ["202505/all_en"]},
         notes="Gated on Hugging Face: preparation needs HF_TOKEN or staged files.",
+    ),
+    _native(
+        "cruxeval_o",
+        "math_code",
+        "cruxeval",
+        args={
+            "image": "ghcr.io/generality-labs/inspect-eval-bigcodebench:2026-07-28@sha256:d7c88bf92782a7486d64bc1d07cd38ba9e735b5f58235fc0c0f36f8f692a1cfe"
+        },
+        notes=(
+            "Output expressions checked with Python equality in the isolated shared test "
+            "supervisor. Single generation without few-shot examples; not the upstream "
+            "CoT/few-shot prompt. Images need pyarrow and rpyc."
+        ),
     ),
     _native(
         "livecodebench",

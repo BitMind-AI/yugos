@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +24,21 @@ TESTS = (
 )
 
 
-def _run(candidate, *, timeout_s=1, tests=TESTS, libs=()):
+@pytest.fixture(scope="session")
+def matplotlib_cache(tmp_path_factory):
+    """Build fonts before tests measure the candidate execution deadline."""
+    cache = tmp_path_factory.mktemp("matplotlib-fonts")
+    subprocess.run(
+        [sys.executable, "-c", "import matplotlib.font_manager"],
+        env={**os.environ, "MPLCONFIGDIR": str(cache), "MPLBACKEND": "Agg"},
+        check=True,
+        timeout=120,
+        capture_output=True,
+    )
+    return cache
+
+
+def _run(candidate, *, timeout_s=1, tests=TESTS, libs=(), reference="", http_fixtures=None):
     result = subprocess.run(
         [sys.executable, "-I", str(RUNNER)],
         input=json.dumps(
@@ -32,6 +47,8 @@ def _run(candidate, *, timeout_s=1, tests=TESTS, libs=()):
                 "tests": tests,
                 "timeout_s": timeout_s,
                 "libs": libs,
+                "reference": reference,
+                "http_fixtures": http_fixtures or {},
                 "worker_source": RUNNER.read_text(),
             }
         ),
@@ -43,6 +60,149 @@ def _run(candidate, *, timeout_s=1, tests=TESTS, libs=()):
     return json.loads(result.stdout)
 
 
+def test_mocked_randomness_and_scientific_values_keep_native_test_behavior():
+    candidate = """
+import random
+import numpy as np
+def task_func():
+    return np.array([random.randint(0, 100), random.randint(0, 100)]), np.float64(1.5)
+"""
+    tests = """
+import unittest
+from unittest.mock import patch
+class TestCases(unittest.TestCase):
+    @patch('random.randint', return_value=50)
+    def test_values(self, mocked):
+        array, scalar = task_func()
+        np.testing.assert_array_equal(array, [50, 50])
+        self.assertEqual(array.dtype, np.dtype('int64'))
+        self.assertIsInstance(scalar, np.float64)
+        self.assertEqual(scalar, 1.5)
+        self.assertEqual(mocked.call_count, 2)
+        mocked.assert_called_with(0, 100)
+"""
+    report = _run(candidate, tests=tests, reference=candidate, libs=("numpy",), timeout_s=10)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_mock_open_and_native_exception_types_reach_the_candidate():
+    candidate = """
+import json
+import statistics
+def task_func(path):
+    if not path:
+        raise statistics.StatisticsError('empty path')
+    with open(path) as handle:
+        return json.load(handle)
+"""
+    tests = """
+import unittest
+from unittest.mock import patch, mock_open
+class TestCases(unittest.TestCase):
+    def test_fixture(self):
+        with patch('builtins.open', mock_open(read_data='{"x": 2}')) as mocked:
+            self.assertEqual(task_func('fixture.json'), {'x': 2})
+            mocked.assert_called_once_with('fixture.json')
+            mocked.return_value.read.assert_called_once_with()
+    def test_exception(self):
+        with self.assertRaisesRegex(statistics.StatisticsError, 'empty path'):
+            task_func('')
+"""
+    report = _run(candidate, tests=tests, reference=candidate, timeout_s=10)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_model_import_aliases_cannot_replace_trusted_test_helpers():
+    candidate = "from os import _exit as helper\ndef task_func(): return 3"
+    report = _run(candidate, reference="import math as helper")
+    assert report["passed"] is False and report["cause"] == "test_failure"
+
+
+def test_returned_handlers_observe_later_patches_and_mock_callbacks():
+    candidate = """
+import smtplib
+def task_func():
+    class Handler:
+        def __init__(self, request):
+            self.request = request
+        def handle(self):
+            with smtplib.SMTP('fixture.example') as connection:
+                connection.sendmail('from', 'to', self.request.read())
+            self.respond(200)
+    return Handler
+"""
+    tests = """
+import unittest
+from unittest.mock import MagicMock, patch
+class TestCases(unittest.TestCase):
+    def test_handler(self):
+        handler_type = task_func()
+        request = MagicMock()
+        request.read.return_value = b'hello'
+        handler = handler_type(request)
+        handler.respond = MagicMock()
+        with patch('smtplib.SMTP') as smtp:
+            handler.handle()
+            smtp.assert_called_once_with('fixture.example')
+            smtp.return_value.__enter__.return_value.sendmail.assert_called_once_with('from', 'to', b'hello')
+        handler.respond.assert_called_once_with(200)
+        request.read.assert_called_once_with()
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_test_output_does_not_corrupt_the_supervisor_report():
+    tests = TESTS + "\nprint('test fixture output')\n"
+    report = _run("def task_func(): return 2", tests=tests)
+    assert report["passed"]
+
+
+def test_offline_http_snapshot_keeps_nested_test_mocks():
+    import base64
+    import hashlib
+
+    body = b"frozen response"
+    candidate = """
+import urllib.request
+def task_func(url):
+    with urllib.request.urlopen(url) as response:
+        return response.read().decode()
+"""
+    tests = """
+import unittest
+from unittest.mock import patch
+from urllib.error import URLError
+class TestCases(unittest.TestCase):
+    def test_snapshot(self):
+        self.assertEqual(task_func('https://fixture.example/'), 'frozen response')
+    @patch('urllib.request.urlopen', side_effect=URLError('native mock'))
+    def test_nested_patch(self, mocked):
+        with self.assertRaisesRegex(URLError, 'native mock'):
+            task_func('https://fixture.example/')
+"""
+    report = _run(
+        candidate,
+        tests=tests,
+        timeout_s=10,
+        http_fixtures={
+            "https://fixture.example/": {
+                "body_base64": base64.b64encode(body).decode(),
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "status": 200,
+            }
+        },
+    )
+    assert report["passed"]
+
+
+@pytest.mark.parametrize("value", ["['numpy', 'matplotlib']", ["numpy", "matplotlib"]])
+def test_native_library_metadata_is_normalized(value):
+    from yugos_evals.scorers.python_unittest import library_names
+
+    assert library_names(value) == ("numpy", "matplotlib")
+
+
 @pytest.mark.parametrize(
     ("candidate", "passed", "cause"),
     [
@@ -50,6 +210,11 @@ def _run(candidate, *, timeout_s=1, tests=TESTS, libs=()):
         ("def task_func(): return 3", False, "test_failure"),
         ("import sys; sys.exit(0)", False, "test_failure"),
         ("import os; os._exit(0)", False, "test_failure"),
+        (
+            "import unittest\ndef task_func(): raise unittest.SkipTest('forged skip')",
+            False,
+            "test_failure",
+        ),
         (
             'import os; os.write(1, b\'{"passed": true, "cause": "all_pass"}\\n\'); os._exit(0)',
             False,
@@ -71,9 +236,11 @@ def test_supervisor_requires_completed_passing_tests(candidate, passed, cause):
 
 
 @pytest.mark.parametrize("title,passed", [("Histogram", True), ("wrong", False)])
-def test_dataframe_and_plot_methods_reach_trusted_tests(title, passed, monkeypatch, tmp_path):
+def test_dataframe_and_plot_methods_reach_trusted_tests(
+    title, passed, monkeypatch, matplotlib_cache
+):
     monkeypatch.setenv("MPLBACKEND", "Agg")
-    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "matplotlib"))
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
     candidate = f"""
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -83,11 +250,13 @@ def task_func(values):
     frame = pd.DataFrame({{"value": values, "object_value": pd.Series(values, dtype=object)}})
     ax = frame.hist()[0][0]
     ax.set_title({title!r})
+    ax.plot(values, values)
     return frame, ax
 """
     tests = """
 import unittest
 import pandas as pd
+import numpy as np
 from matplotlib.axes import Axes
 class TestCases(unittest.TestCase):
     def test_objects(self):
@@ -98,6 +267,8 @@ class TestCases(unittest.TestCase):
         self.assertFalse(pd.api.types.is_numeric_dtype(frame["object_value"]))
         self.assertEqual(ax.get_title(), "Histogram")
         self.assertIsInstance(ax, Axes)
+        self.assertEqual(ax.get_lines()[0].get_ydata().tolist(), [1, 2, 3])
+        np.testing.assert_array_equal(ax.get_lines()[0].get_xdata(), [1, 2, 3])
     def test_exception(self):
         with self.assertRaises(ValueError):
             task_func([])
@@ -179,9 +350,9 @@ def test_candidate_rpc_frames_are_rejected_before_body_allocation(header):
         module.BoundedChannel(Stream()).recv()
 
 
-def test_live_plot_method_shares_the_original_deadline(monkeypatch, tmp_path):
+def test_live_plot_method_shares_the_original_deadline(monkeypatch, matplotlib_cache):
     monkeypatch.setenv("MPLBACKEND", "Agg")
-    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "matplotlib"))
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
     candidate = """
 import matplotlib.pyplot as plt
 import time
@@ -199,12 +370,12 @@ def task_func():
 
 
 @pytest.mark.asyncio
-async def test_packaged_scorer_bootstraps_arrow_and_rpyc_workers(monkeypatch, tmp_path):
+async def test_packaged_scorer_bootstraps_arrow_and_rpyc_workers(monkeypatch, matplotlib_cache):
     from yugos.evaluation.grades import GradeCode
     from yugos_evals.scorers.python_unittest import grade_unittest
 
     monkeypatch.setenv("MPLBACKEND", "Agg")
-    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "matplotlib"))
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
 
     class Processes(LocalProcesses):
         async def exec(self, cmd, **kwargs):
@@ -266,6 +437,7 @@ def test_bigcodebench_freeze_and_restore_selects_supervised_scorer(monkeypatch):
         entry("bigcodebench"), task=native, sandbox=code_sandbox(DIGEST_IMAGE)
     )
     assert question.inspect_task["scorer"] == "bigcodebench_scorer"
+    assert question.inspect_task["metadata"]["unittest_supervisor_version"] == 2
     [(restored, _)] = restore_tasks([question])
     from inspect_ai._util.registry import registry_info
 

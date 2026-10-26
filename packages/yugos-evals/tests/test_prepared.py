@@ -141,6 +141,8 @@ def test_native_choice_prompts_and_fewshot_defaults_survive_preparation(
         ("race_h", "inspect_evals.race_h.race_h", "hf_dataset", "ANSWER: B"),
         ("truthfulqa", "inspect_evals.truthfulqa.truthfulqa", "hf_dataset", "ANSWER: B"),
         ("drop", "inspect_evals.drop.drop", "hf_dataset", "ANSWER: B"),
+        ("paws", "inspect_evals.paws.paws", "hf_dataset", "Yes"),
+        ("pubmedqa", "inspect_evals.pubmedqa.pubmedqa", "hf_dataset", "ANSWER: B"),
     ],
 )
 def test_new_text_tasks_keep_native_request_and_grade_without_reloading_source(
@@ -156,10 +158,18 @@ def test_new_text_tasks_keep_native_request_and_grade_without_reloading_source(
     sample = Sample(
         id="selected",
         input="What is one plus one?",
-        choices=None if benchmark_id in {"gsm8k", "boolq", "drop"} else ["one", "two"],
-        target={"gsm8k": "2", "boolq": "Yes"}.get(benchmark_id, "B"),
+        choices=None if benchmark_id in {"gsm8k", "boolq", "drop", "paws"} else ["one", "two"],
+        target={"gsm8k": "2", "boolq": "Yes", "paws": "Yes"}.get(benchmark_id, "B"),
         metadata={clusters[benchmark_id]: "cluster"} if benchmark_id in clusters else None,
     )
+    if benchmark_id == "pubmedqa":
+        import json
+        from pathlib import Path
+
+        test_ids = json.loads(
+            (Path(module.__file__).parent / "data/test_ground_truth.json").read_text()
+        )
+        sample.id, sample.metadata = next(iter(test_ids)), {}
     monkeypatch.setattr(module, loader, lambda **kw: MemoryDataset([sample]))
     benchmark = entry(benchmark_id)
     native = load_task(benchmark)
@@ -175,6 +185,40 @@ def test_new_text_tasks_keep_native_request_and_grade_without_reloading_source(
         [scored] = log.samples
         [score] = scored.scores.values()
         results.append((miner.calls[0].request, score.value))
+    assert results[0] == results[1]
+
+
+@pytest.mark.parametrize("benchmark_id", ["worldsense", "bbeh"])
+@pytest.mark.parametrize("correct", [True, False])
+def test_reasoning_task_metrics_and_grades_survive_preparation(
+    benchmark_id, correct, monkeypatch, tmp_path
+):
+    module = importlib.import_module(f"inspect_evals.{benchmark_id}.{benchmark_id}")
+    world = benchmark_id == "worldsense"
+    target = "TRUE" if world else "2"
+    answer = target if correct else ("FALSE" if world else "3")
+    metadata = (
+        {"tuple_ID": "fixture", "problemname": "Infer.normal", "problemsize": 2}
+        if world
+        else {"task": "boolean_expressions"}
+    )
+    sample = Sample(id="selected", input="A fixture question", target=target, metadata=metadata)
+    loader = "load_worldsense_dataset" if world else "load_bbeh_dataset"
+    monkeypatch.setattr(module, loader, lambda *a, **kw: MemoryDataset([sample]))
+    benchmark = entry(benchmark_id)
+    native = load_task(benchmark)
+    questions = freeze_entry(benchmark, task=native)
+    monkeypatch.setattr(module, loader, lambda *a, **kw: pytest.fail("source reloaded"))
+    [(prepared, _)] = restore_tasks(questions)
+    results = []
+    for name, task in (("native", native), ("prepared", prepared)):
+        miner = ScriptedRouter(answer)
+        log = run(task, miner, tmp_path / name)
+        assert log.status == "success"
+        [scored] = log.samples
+        [score] = scored.scores.values()
+        assert score.value == ("C" if correct else "I")
+        results.append((miner.calls[0].request, log.results.scores, score.value))
     assert results[0] == results[1]
 
 
@@ -548,3 +592,98 @@ def test_missing_checker_resources_fail_before_any_download(task, monkeypatch):
     monkeypatch.setattr(nltk, "download", lambda *a, **kw: pytest.fail("runtime download"))
     with pytest.raises(ValueError, match="staged in the execution image"):
         build(options={"dataset": []}, task=task, args={})
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_ds1000_restores_native_requests_and_checker_invocation(success, monkeypatch, tmp_path):
+    from inspect_ai.util import ExecResult
+
+    module = importlib.import_module("inspect_evals.ds1000.ds1000")
+    sample = Sample(
+        id="q",
+        input="Complete the program.",
+        target="private reference",
+        metadata={
+            "code_context": "def test_execution(solution): pass",
+            "library": "Pandas",
+            "perturbation_type": "Origin",
+        },
+    )
+    monkeypatch.setattr(module, "ds1000_dataset", lambda *a, **kw: MemoryDataset([sample]))
+    native = load_task(entry("ds1000"))
+    native.sandbox = None
+    frozen = freeze_entry(entry("ds1000"), task=native)
+    monkeypatch.setattr(module, "ds1000_dataset", lambda *a, **kw: pytest.fail("source reloaded"))
+    [(prepared, _)] = restore_tasks(frozen)
+
+    class Checker:
+        def __init__(self):
+            self.writes = []
+            self.execs = []
+
+        async def write_file(self, path, content):
+            self.writes.append((path, content))
+
+        async def exec(self, cmd, **kwargs):
+            self.execs.append((cmd, kwargs))
+            return ExecResult(success, 0 if success else 1, "", "")
+
+    invocations = []
+    requests = []
+    for label, task in [("native", native), ("prepared", prepared)]:
+        checker = Checker()
+        monkeypatch.setattr(module, "sandbox", lambda: checker)
+        router = ScriptedRouter("<code>result = 2</code>")
+        log = run(task, router, tmp_path / label)
+        assert log.status == "success"
+        assert next(iter(log.samples[0].scores.values())).value == ("C" if success else "I")
+        assert "private reference" not in router.seen()
+        invocations.append((checker.writes, checker.execs))
+        requests.append(router.calls[0].request)
+    # Pack IDs namespace the temporary filename; checker code and execution
+    # settings must stay identical, and each command must name its staged file.
+    for writes, executions in invocations:
+        assert len(writes) == len(executions) == 1
+        assert executions[0][0] == ["python", writes[0][0]]
+    assert invocations[0][0][0][1] == invocations[1][0][0][1]
+    assert invocations[0][1][0][1] == invocations[1][1][0][1]
+    assert requests[0] == requests[1]
+
+
+@pytest.mark.parametrize("answer,correct", [("private answer", True), ("wrong", False)])
+def test_agentbench_restores_native_submission_and_match_grading(
+    answer, correct, monkeypatch, tmp_path
+):
+    module = importlib.import_module("inspect_evals.agent_bench.agent_bench")
+    sample = Sample(
+        id="q",
+        input="Find the answer.",
+        target="",
+        metadata={"evaluation": {"match": "private answer"}},
+    )
+    monkeypatch.setattr(module, "agent_bench_os_dataset", lambda **kw: MemoryDataset([sample]))
+    native = load_task(entry("agent_bench_os"))
+    frozen = freeze_entry(entry("agent_bench_os"), task=native)
+    monkeypatch.setattr(
+        module, "agent_bench_os_dataset", lambda **kw: pytest.fail("source reloaded")
+    )
+    [(prepared, _)] = restore_tasks(frozen)
+    requests = []
+    for label, task in [("native", native), ("prepared", prepared)]:
+        seen = []
+
+        async def reply(call):
+            seen.append(call.request)
+            return RouterReply(
+                tool_calls=(
+                    RouterToolCall(id="done", function="submit", arguments={"answer": answer}),
+                ),
+                finish_reason="tool_calls",
+            )
+
+        log = run(task, reply, tmp_path / label)
+        assert log.status == "success"
+        assert next(iter(log.samples[0].scores.values())).value is correct
+        assert len(seen) == 1 and "private answer" not in str(seen[0].messages)
+        requests.append(seen[0])
+    assert requests[0] == requests[1]
