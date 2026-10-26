@@ -132,10 +132,15 @@ agent/tool turns get new routing decisions over the updated conversation.
 There are no provider-response callbacks to the router. Prompt editing, voting,
 escalation, cutoff retries and follow-up repairs are disallowed.
 
-Routing must come from the trained weights. Generic tokenization, embeddings,
-request-length and tool-availability features are permitted. Benchmark detectors,
-keyword routing, hand-written score overrides and request-to-route tables are
-not. Generic argmax and output-index mapping can decode the model's decision.
+Trained weights must meaningfully influence routing; unused or decorative weights
+are not enough. Generic tokenization, embeddings, request-length and tool-availability
+features, output decoding, and cost/latency/quality tradeoffs are permitted. The
+learned model does not have to determine the final choice unaided.
+
+Review rejects benchmark-specific shortcuts: detecting benchmark identifiers or
+distinctive evaluation prompt/tool fingerprints, memorizing benchmark-question-to-route
+lookups, or exploiting a known evaluation order. Generic feature extraction and
+cost-aware decoding are not violations merely because they are hand-written.
 Inference must not depend on other samples or evaluation order.
 
 The [starter example](../examples/starter-router) is a fixed-model baseline for

@@ -13,9 +13,11 @@ and all inference assets. `load_model(weights_path)` returns an object with
 
 The host forwards the original conversation, tools and settings. There is one
 logical generation per native model turn, no response callback, and no prompt
-editing, voting, escalation or answer repair. Generic preprocessing and output
-decoding are allowed; benchmark detectors, keyword rules and decorative weights
-are not.
+editing, voting, escalation or answer repair. Trained weights must meaningfully
+influence routing. Generic preprocessing, output decoding, cost penalties and
+configured cost/latency tradeoffs are allowed, even when their coefficients are
+not learned. Benchmark-specific detectors, memorized evaluation-question routes,
+exploiting evaluation order, and decorative weights are not allowed.
 
 The starter is a fixed-model local baseline. Replace its constant choice with
 learned inference before competitive submission. Read [docs/miner.md](docs/miner.md)
