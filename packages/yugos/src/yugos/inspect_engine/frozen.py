@@ -207,7 +207,11 @@ def restore_tasks(
     for q in questions:
         task_config = TaskConfig.model_validate(q.inspect_task)
         key = task_config.model_dump_json()
-        sample = Sample.model_validate(q.inspect_sample).model_copy(deep=True)
+        # Sample validation discards a serialized sandbox spec, so decode it here.
+        frozen = dict(q.inspect_sample)
+        sandbox = sandbox_spec(frozen.pop("sandbox", None))
+        sample = Sample.model_validate(frozen).model_copy(deep=True)
+        sample.sandbox = sandbox
         if question_text(sample) != (q.prompt, q.expected_answer):
             raise ValueError("question text differs from its frozen Inspect sample")
         sample.id = q.question_id

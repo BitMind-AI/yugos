@@ -149,6 +149,37 @@ def test_sample_assets_are_frozen_and_revalidated_before_execution(tmp_path):
         restore_tasks([q])
 
 
+def test_sample_sandboxes_restore_per_sample_and_stay_digest_checked():
+    # Restoring once dropped sample-level sandboxes, so such samples ran unisolated.
+    from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
+
+    def sandbox(image):
+        config = {"services": {"default": {"image": image}}, "x-modal": {"block_network": True}}
+        return SandboxEnvironmentSpec("modal", ComposeConfig.model_validate(config))
+
+    images = {f"q{i}": f"fixture/task-{i}@sha256:" + str(i) * 64 for i in (1, 2)}
+    samples = [
+        Sample(id=i, input=i, target="a", sandbox=sandbox(image)) for i, image in images.items()
+    ]
+    questions = freeze_task(
+        Task(dataset=samples, scorer=exact()), source="s", workload_class="agentic"
+    )
+    [(restored, _)] = restore_tasks(questions)
+    assert restored.sandbox is None
+    restored_images = [
+        (
+            s.sandbox.type,
+            s.sandbox.model_dump(mode="json")["config"]["services"]["default"]["image"],
+        )
+        for s in restored.dataset
+    ]
+    assert restored_images == [("modal", images[q.question_id.split(":", 1)[1]]) for q in questions]
+    service = questions[0].inspect_sample["sandbox"]["config"]["services"]["default"]
+    service["image"] = "fixture:latest"
+    with pytest.raises(ValueError, match="digest-pinned"):
+        restore_tasks(questions)
+
+
 def test_display_fields_cannot_diverge_from_the_executable_sample():
     [q] = freeze_task(
         Task(dataset=[Sample(id="q", input="q", target="a")], scorer=exact()),
