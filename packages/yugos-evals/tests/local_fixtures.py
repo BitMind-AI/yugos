@@ -31,13 +31,15 @@ USAGE = {"input_tokens": 1000, "output_tokens": 500}
 CALL_COST = 0.003
 
 ROUTER = """
+from yugos.inference.actions import ModelChoice
+
 def load_model(weights_path):
     class Router:
-        def solve(self, input):
+        def route(self, input):
             prompt = input.messages[-1].content or ""
             if "crash" in prompt:
                 raise RuntimeError("router bug")
-            yield {"kind": "call", "model": MODEL, "input": input}
+            return ModelChoice(**MODEL)
 
     return Router()
 """

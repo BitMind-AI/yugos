@@ -138,6 +138,10 @@ keyword routing, hand-written score overrides and request-to-route tables are
 not. Generic argmax and output-index mapping can decode the model's decision.
 Inference must not depend on other samples or evaluation order.
 
+The [starter example](../examples/starter-router) is a fixed-model baseline for
+local packaging and execution checks. Replace its constant choice with learned
+inference before competitive submission.
+
 All inference assets must be packaged; the worker has no network access or
 provider credentials. Run the model in
 inference mode, and keep request preprocessing separate from provider input.
