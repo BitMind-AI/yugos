@@ -1,32 +1,25 @@
 # Yugos
 
-> Yugos is a Bittensor subnet that pays for a router. Train a small routing model, package it, and submit it. The hosted service runs it on a shared exam, grades the last model reply, and records spend and time. Validators pay the champions.
+> Yugos is a Bittensor subnet that pays for a router. Train a small routing model, package it, and submit it. The hosted service runs it on a shared exam, grades the provider reply, and records spend and time. Validators pay the champions.
 
 An agent that follows this file can install the tools, train a router against public benchmarks, and submit it. Read the linked pages before changing the contract or the score.
 
 ## What to train
 
-Train a router, not a foundation model. The artifact is three files:
+Train a routing model. Package `model.py`, `model.safetensors`, `models.json`
+and all inference assets. `load_model(weights_path)` returns an object with
+`route(input) -> ModelChoice`. The output has only
+`provider_id`, `model_id` and `effort`, matching a declared choice.
 
-| File | Role |
-| --- | --- |
-| `model.py` | Defines `load_model(weights_path)`. That returns an object whose `solve(input)` is a generator. |
-| `model.safetensors` | The weights `load_model` reads. |
-| `models.json` | Every `{provider_id, model_id, effort}` the router may yield. No duplicates. A different `effort` is a different choice. |
+The host forwards the original conversation, tools and settings. There is one
+logical generation per native model turn, no response callback, and no prompt
+editing, voting, escalation or answer repair. Generic preprocessing and output
+decoding are allowed; benchmark detectors, keyword rules and decorative weights
+are not.
 
-`solve` yields one call at a time and may read the reply before the next yield:
-
-```python
-reply = yield {
-    "kind": "call",
-    "model": {"provider_id": "...", "model_id": "...", "effort": None},
-    "input": input,
-}
-```
-
-Stop yielding. `reply.text` on the last yield is the answer that gets graded. A call absent from `models.json` scores that question zero. There is no fallback model.
-
-Copy `examples/starter-router`. It calls OpenRouter `openai/gpt-5-nano`. A local run needs `OPENROUTER_API_KEY`. Replace that policy with one you fit.
+The starter is a fixed-model local baseline. Replace its constant choice with
+learned inference before competitive submission. Read [docs/miner.md](docs/miner.md)
+for the full submission contract.
 
 ## The score you are fitting
 
@@ -122,5 +115,5 @@ yugos status router.receipt.json --wallet miner --hotkey default
 - [Start mining](docs/miner.md): install, register, pack, and submit.
 - [Scoring and emissions](docs/scoring.md): the full net-value equation, gates, and the 85/10/5 split.
 - [Providers and models](docs/models.md): the world card and the API-key names.
-- [Starter router](examples/starter-router): a working three-file submission.
+- [Starter router](examples/starter-router): a fixed-model baseline for local checks.
 - [Local evaluation](packages/yugos-evals/README.md#local-evaluation): pack build, run, compare, and spend caps.

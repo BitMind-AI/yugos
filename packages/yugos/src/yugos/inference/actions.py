@@ -1,4 +1,4 @@
-"""Model calls requested by a submission and the outputs it can inspect."""
+"""Routing choices and host-constructed provider calls."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from .chat import ModelInput, ProviderState, ToolCall
+from .chat import ModelInput
 
 ACTION_SCHEMA = "yugos.action.v2"
 
@@ -47,20 +47,10 @@ def require_supported_models(
 
 
 class CallAction(BaseModel):
-    """One model call with the exact conversation and tools chosen by the submission."""
+    """One provider generation constructed by the host."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
     schema_name: Literal[ACTION_SCHEMA] = Field(alias="schema", default=ACTION_SCHEMA)
     kind: Literal["call"] = "call"
     model: ModelChoice
     input: ModelInput
-
-
-class CallOutput(BaseModel):
-    """Provider text and completion status visible to the submission."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    text: str
-    finish_reason: str | None
-    tool_calls: tuple[ToolCall, ...] = ()
-    provider_state: ProviderState | None = None

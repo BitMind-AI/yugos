@@ -7,11 +7,13 @@ from typing import Annotated, Literal, TextIO
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from yugos.inference.actions import CallAction, CallOutput, RequiredModels
+from yugos.inference.actions import ModelChoice, RequiredModels
 from yugos.inference.chat import ModelInput
 
-SCHEMA = "yugos.worker.v4"
+SCHEMA = "yugos.worker.v5"
 MAX_FRAME_BYTES = 4 * 1024 * 1024
+ROUTING_RUNTIME = "python-safetensors-route-v1"
+SubmissionRuntime = Literal["python-safetensors-route-v1"]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -58,7 +60,7 @@ class PreparedMetadata(StrictModel):
     manifest_sha256: Digest
     name: str = Field(min_length=1, max_length=256)
     version: str = Field(min_length=1, max_length=128)
-    runtime: Literal["python-safetensors-v2"] = "python-safetensors-v2"
+    runtime: SubmissionRuntime
     required_models: RequiredModels
 
 
@@ -72,7 +74,6 @@ class Start(Envelope):
     kind: Literal["start"] = "start"
     submission_sha256: Digest
     expected_manifest_sha256: Digest | None = None
-    max_active_requests: int = Field(default=1, ge=1, le=8, strict=True)
 
 
 class Prepared(Envelope):
@@ -88,32 +89,16 @@ class Loaded(Envelope):
     kind: Literal["loaded"] = "loaded"
 
 
-class Solve(Envelope):
-    kind: Literal["solve"] = "solve"
+class Route(Envelope):
+    kind: Literal["route"] = "route"
     request_id: str = Field(min_length=1, max_length=128)
     input: ModelInput
 
 
-class Resume(Envelope):
-    kind: Literal["resume"] = "resume"
+class Routed(Envelope):
+    kind: Literal["routed"] = "routed"
     request_id: str = Field(min_length=1, max_length=128)
-    output: CallOutput
-
-
-class Cancel(Envelope):
-    kind: Literal["cancel"] = "cancel"
-    request_id: str = Field(min_length=1, max_length=128)
-
-
-class CallRequested(Envelope):
-    kind: Literal["call_requested"] = "call_requested"
-    request_id: str = Field(min_length=1, max_length=128)
-    action: CallAction
-
-
-class Finished(Envelope):
-    kind: Literal["finished"] = "finished"
-    request_id: str = Field(min_length=1, max_length=128)
+    model: ModelChoice
 
 
 class Failed(Envelope):
@@ -130,18 +115,7 @@ class Stopped(Envelope):
 
 
 Message = Annotated[
-    Start
-    | Prepared
-    | Load
-    | Loaded
-    | Solve
-    | Resume
-    | Cancel
-    | CallRequested
-    | Finished
-    | Failed
-    | Shutdown
-    | Stopped,
+    Start | Prepared | Load | Loaded | Route | Routed | Failed | Shutdown | Stopped,
     Field(discriminator="kind"),
 ]
 _ADAPTER = TypeAdapter(Message)

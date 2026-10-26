@@ -11,23 +11,20 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from yugos.inference.actions import CallAction, CallOutput, ModelChoice, require_supported_models
+from yugos.inference.actions import ModelChoice, require_supported_models
 from yugos.inference.chat import ModelInput
 
 from .protocol import (
-    CallRequested,
-    Cancel,
     Failed,
     Failure,
-    Finished,
     Load,
     Loaded,
     Message,
     Prepared,
     PreparedMetadata,
-    Resume,
+    Route,
+    Routed,
     Shutdown,
-    Solve,
     Start,
     Stopped,
     decode_line,
@@ -64,7 +61,6 @@ class RequestState(StrEnum):
     ACTIVE = "active"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
     INTERRUPTED = "interrupted"
 
 
@@ -108,12 +104,7 @@ class SubmissionSession:
         worker: Worker,
         allowed_models: frozenset[ModelChoice],
         timeouts: WorkerTimeouts,
-        *,
-        max_active_requests: int = 1,
     ):
-        if type(max_active_requests) is not int or not 1 <= max_active_requests <= 8:
-            raise ValueError("max_active_requests must be between 1 and 8")
-        self.max_active_requests = max_active_requests
         self._lock = RLock()
         self._worker = worker
         self._allowed = allowed_models
@@ -123,7 +114,6 @@ class SubmissionSession:
         self._serving = False
         self._session_exit: SessionExit | None = None
         self._requests: dict[str, RequestOutcome] = {}
-        self._request_id: str | None = None
         self.metadata: PreparedMetadata | None = None
         self.cleanup: CleanupReport | None = None
 
@@ -147,7 +137,9 @@ class SubmissionSession:
     def _outcome(self, request_id, state):
         previous = self._requests.get(request_id)
         outcome = RequestOutcome(
-            request_id, state, self._session_exit,
+            request_id,
+            state,
+            self._session_exit,
             previous.decision_time_ns if previous else 0,
         )
         self._requests[request_id] = outcome
@@ -164,7 +156,7 @@ class SubmissionSession:
         try:
             raw = self._worker.exchange(encoded, timeout_s=timeout_s)
         finally:
-            if isinstance(message, (Solve, Resume)):
+            if isinstance(message, Route):
                 outcome = self._requests[message.request_id]
                 self._requests[message.request_id] = replace(
                     outcome,
@@ -182,7 +174,7 @@ class SubmissionSession:
 
     def _protocol_error(self, message: Message, detail: str, cause: Exception | None = None):
         """Classify a protocol violation by the phase in which it occurred."""
-        solving = isinstance(message, (Solve, Resume, Cancel))
+        solving = isinstance(message, Route)
         if solving:
             failure = Failure(code="request.protocol", request_id=message.request_id, detail=detail)
             self._disable(failure, owner="submission")
@@ -223,7 +215,6 @@ class SubmissionSession:
                 sequence=0,
                 submission_sha256=submission_sha256,
                 expected_manifest_sha256=manifest_sha256,
-                max_active_requests=self.max_active_requests,
             )
             reply = self._exchange(start, self._timeouts.prepare_s)
             if isinstance(reply, Failed) and reply.failure.code.startswith("preparation."):
@@ -262,55 +253,17 @@ class SubmissionSession:
         self._serving = True
         return metadata
 
-    def solve(self, input: ModelInput, request_id: str, *, timeout_s: float) -> CallAction:
-        """Begin a question and get its first call, replacing any unfinished question."""
+    def route(self, input: ModelInput, request_id: str, *, timeout_s: float) -> ModelChoice:
+        """Get one choice without giving the worker authority over provider input."""
         with self._lock:
-            self._request_id = request_id
             return self._next(
-                Solve(
+                Route(
                     session_id=self._id, sequence=self._sequence, request_id=request_id, input=input
                 ),
                 timeout_s,
             )
 
-    def resume(
-        self, output: CallOutput, *, timeout_s: float, request_id: str | None = None
-    ) -> CallAction | None:
-        """Advance the identified generator; concurrent callers must supply its ID."""
-        with self._lock:
-            if self.max_active_requests > 1 and request_id is None:
-                raise ValueError("concurrent resume requires a request ID")
-            return self._next(
-                Resume(
-                    session_id=self._id,
-                    sequence=self._sequence,
-                    request_id=request_id or self._request_id,
-                    output=output,
-                ),
-                timeout_s,
-            )
-
-    def cancel(self, request_id: str) -> None:
-        """Release a finished or abandoned request without disturbing other generators."""
-        with self._lock:
-            if not self._serving:
-                return
-            request = Cancel(session_id=self._id, sequence=self._sequence, request_id=request_id)
-            try:
-                reply = self._exchange(request, self._timeouts.decision_s)
-                if not isinstance(reply, Finished) or reply.request_id != request_id:
-                    self._protocol_error(request, "worker did not confirm request cleanup")
-                self._outcome(request_id, RequestState.CANCELLED)
-            except (TimeoutError, EOFError, OSError) as exc:
-                failure = Failure(
-                    code="request.protocol",
-                    request_id=request_id,
-                    detail="worker request cleanup failed",
-                )
-                self._disable(failure, owner="infrastructure")
-                raise self._request_error(failure) from exc
-
-    def _next(self, request: Solve | Resume, timeout_s: float) -> CallAction | None:
+    def _next(self, request: Route, timeout_s: float) -> ModelChoice:
         """Permit calls only to the miner's declared pool; never substitute a model.
 
         Request errors let evaluation score the question zero. Transport/protocol
@@ -343,24 +296,19 @@ class SubmissionSession:
                 self._protocol_error(request, "worker returned an unrelated failure")
             self._outcome(request.request_id, RequestState.FAILED)
             raise self._request_error(reply.failure)
-        if (
-            not isinstance(reply, (CallRequested, Finished))
-            or reply.request_id != request.request_id
-        ):
-            self._protocol_error(request, "worker returned an unrelated decision")
-        if isinstance(reply, Finished) and isinstance(request, Resume):
-            self._outcome(request.request_id, RequestState.COMPLETED)
-            return None
-        if isinstance(reply, Finished) or reply.action.model not in self._allowed:
+        if not isinstance(reply, Routed) or reply.request_id != request.request_id:
+            self._protocol_error(request, "worker did not return one routing choice")
+        if reply.model not in self._allowed:
             self._outcome(request.request_id, RequestState.FAILED)
             raise self._request_error(
                 Failure(
                     code="request.invalid_action",
                     request_id=request.request_id,
-                    detail="submission finished without a call or requested an undeclared model",
+                    detail="route selected an undeclared model",
                 )
             )
-        return reply.action
+        self._outcome(request.request_id, RequestState.COMPLETED)
+        return reply.model
 
     def close(self) -> CleanupReport:
         """Request shutdown and report whether the execution adapter confirmed teardown."""

@@ -1,12 +1,9 @@
 # Mine on Yugos
 
-You submit a **router**: code and weights that choose which models to call, how
-to prompt them, and when to stop. The subnet runs those calls, grades the final
-answer, and scores the result on quality, cost, and time. Training and routing
-policy belong to your submission. Copy
-[`examples/starter-router`](../examples/starter-router). It calls the cheap
-OpenRouter model `openai/gpt-5-nano` from the [world card](models.md). A local
-run needs `OPENROUTER_API_KEY`.
+You submit a **trained router**: code and weights that choose one model and
+reasoning effort for each model turn. The subnet forwards the original request,
+grades the provider response, and scores quality, cost, and time. Training and
+routing policy belong to your submission.
 
 Mainnet is subnet **34** (`finney`).
 
@@ -51,7 +48,7 @@ for wallet recovery and staking.
 
 ## Providers and models
 
-Your router yields a `CallAction` naming a **provider, exact model ID, and reasoning effort**. The hosted service makes the provider request and accounts for its cost. You do **not** need your own provider accounts or API keys for hosted evaluation, and must not put credentials in your bundle. Local runs use your own keys.
+Your router returns a `ModelChoice` naming a **provider, exact model ID, and reasoning effort**. The hosted service makes the provider request and accounts for its cost. You do **not** need your own provider accounts or API keys for hosted evaluation, and must not put credentials in your bundle. Local runs use your own keys.
 
 These provider integrations are available in Yugos. The catalog and the competition's allowed choices determine which models you can actually submit:
 
@@ -107,7 +104,7 @@ my-router/
   model.py
   model.safetensors
   models.json
-  router.json          # optional settings and tokenizers
+  router.json          # optional architecture settings
   encoder/             # optional nested assets
 ```
 
@@ -124,44 +121,49 @@ may call. Different efforts are different choices. Duplicates are rejected.
 The service only runs choices it supports. A call outside this list scores that
 question zero. There is no fallback model.
 
-`model.py` defines `load_model(weights_path)`. It returns an object with
-`solve(input)`, a generator. The worker loads the model once and starts a fresh
-generator for each question.
+`model.py` defines `load_model(weights_path)`, returning an object with
+`route(input) -> ModelChoice`. It returns one provider/model/effort choice; it
+cannot return a provider request, an answer or a sequence of actions.
 
-```python
-from yugos.inference.actions import CallAction
+`input` is a `ModelInput`: public conversation messages, tools and generation
+settings. The host forwards the original request to the selected model. One
+native model turn makes one routing decision and one logical generation. Later
+agent/tool turns get new routing decisions over the updated conversation.
+There are no provider-response callbacks to the router. Prompt editing, voting,
+escalation, cutoff retries and follow-up repairs are disallowed.
 
+Routing must come from the trained weights. Generic tokenization, embeddings,
+request-length and tool-availability features are permitted. Benchmark detectors,
+keyword routing, hand-written score overrides and request-to-route tables are
+not. Generic argmax and output-index mapping can decode the model's decision.
+Inference must not depend on other samples or evaluation order.
 
-class Router:
-    def __init__(self, weights_path):
-        self.weights_path = weights_path
+The [starter example](../examples/starter-router) is a fixed-model baseline for
+local packaging and execution checks. Replace its constant choice with learned
+inference before competitive submission.
 
-    def solve(self, input):
-        choice = self.choose(input)  # one of the models.json entries
-        yield CallAction(model=choice, input=input)
-
-
-def load_model(weights_path):
-    return Router(weights_path)
-```
-
-`input` is a `ModelInput`: Inspect chat messages, tools, and generation
-settings. The generator can read a response and call again:
-
-```python
-reply = yield CallAction(model=choice, input=next_input)
-# reply.text, reply.finish_reason, reply.tool_calls
-```
-
-Calls for one question are sequential. Finish by ending the generator or using
-a bare `return`. The service grades the last provider response. Returning an
-answer yourself, or stopping before any call, fails that question. The
-submission has no network access during evaluation, so ship every tokenizer
-and weight file the loader needs and open them relative to `weights_path`.
+All inference assets must be packaged; the worker has no network access or
+provider credentials. Run the model in
+inference mode, and keep request preprocessing separate from provider input.
+Old generator submissions must be rewritten and repackaged; the worker accepts
+only the routing interface.
 
 The archive must stay within 24 GiB and 4,096 files. `yugos pack` skips hidden
 files, caches, other ZIPs, and `*.receipt.json`. It rejects symlinks. It writes
 `manifest.json` itself.
+
+## Enforcement and eligibility
+
+The worker validates the bundle format, submission interface and returned model
+choice. The host constructs provider calls from the original request.
+
+Weight-driven routing and independence from other samples are competition
+eligibility requirements. Successful packaging or local evaluation does not
+establish compliance with those requirements.
+
+Hosted submissions must pass a compliance review before competitive evaluation.
+The review assesses whether submitted code and inference assets satisfy the
+routing requirements.
 
 ## Test locally first
 

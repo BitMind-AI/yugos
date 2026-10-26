@@ -7,27 +7,23 @@ This entry point does not establish isolation or make provider calls.
 from __future__ import annotations
 
 import sys
-from collections.abc import Generator
-from contextlib import redirect_stdout, suppress
+from contextlib import redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import TextIO
 
-from yugos.inference.actions import CallAction
+from yugos.inference.actions import ModelChoice
 
 from .bundle import PreparationError, prepare_bundle
 from .protocol import (
-    CallRequested,
-    Cancel,
     Failed,
     Failure,
-    Finished,
     Load,
     Loaded,
     Prepared,
-    Resume,
+    Route,
+    Routed,
     Shutdown,
-    Solve,
     Start,
     Stopped,
     read_message,
@@ -36,7 +32,7 @@ from .protocol import (
 
 
 def _load_model(root: Path):
-    """Load the submitted weights and check that the model exposes solve(input)."""
+    """Load the submitted weights and require route(input)."""
     spec = spec_from_file_location("yugos_submission", root / "model.py")
     if spec is None or spec.loader is None:
         raise ValueError("model.py cannot be imported")
@@ -44,8 +40,8 @@ def _load_model(root: Path):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     model = module.load_model(str(root / "model.safetensors"))
-    if not callable(getattr(model, "solve", None)):
-        raise ValueError("load_model must return a model with solve(input)")
+    if not callable(getattr(model, "route", None)):
+        raise ValueError("load_model must return a model with route(input)")
     return model
 
 
@@ -57,7 +53,7 @@ def serve(
     *,
     prepared_input: bool = False,
 ) -> None:
-    """Keep one model loaded while advancing question generators through controller messages."""
+    """Keep one model loaded and return one routing choice per request."""
     start = read_message(reader)
 
     def failed(sequence, code, detail, request_id=None):
@@ -99,15 +95,6 @@ def serve(
         writer, Prepared(session_id=start.session_id, sequence=1, metadata=prepared.metadata)
     )
     model = None
-    requests = {}
-
-    def discard(request_id):
-        # Remove before closing: faulty generator cleanup must not occupy a slot.
-        generator = requests.pop(request_id, None)
-        if generator is not None:
-            with redirect_stdout(sys.stderr), suppress(Exception):
-                generator.close()
-
     sequence = 2
     while True:
         message = read_message(reader)
@@ -116,8 +103,6 @@ def serve(
             return
         response_fields = {"session_id": start.session_id, "sequence": sequence + 1}
         if isinstance(message, Shutdown):
-            for request_id in list(requests):
-                discard(request_id)
             write_message(writer, Stopped(**response_fields))
             return
         if model is None:
@@ -133,69 +118,28 @@ def serve(
                 failed(sequence + 1, "load.failed", "submission model could not be loaded")
                 return
             write_message(writer, Loaded(**response_fields))
-        elif isinstance(message, Cancel):
-            discard(message.request_id)
-            write_message(writer, Finished(**response_fields, request_id=message.request_id))
-        elif isinstance(message, (Solve, Resume)):
-            request_id = message.request_id
-            if isinstance(message, Resume) and request_id not in requests:
-                failed(sequence + 1, "handshake.protocol", "no matching pending call")
-                return
-            advancing = False
+        elif isinstance(message, Route):
             try:
                 with redirect_stdout(sys.stderr):
-                    if isinstance(message, Solve):
-                        if start.max_active_requests == 1:
-                            # Preserve serial callers' replacement semantics.
-                            for previous_id in list(requests):
-                                discard(previous_id)
-                        if request_id in requests or len(requests) >= start.max_active_requests:
-                            raise ValueError("duplicate request or request capacity exceeded")
-                        generator = model.solve(message.input)
-                        if not isinstance(generator, Generator):
-                            raise ValueError("solve(input) must return a generator")
-                        requests[request_id] = generator
-                        advancing = True
-                        candidate = next(generator)
-                    else:
-                        advancing = True
-                        candidate = requests[request_id].send(message.output)
-            except StopIteration as finished:
-                requests.pop(request_id, None)
-                if finished.value is not None:
-                    failed(
-                        sequence + 1,
-                        "request.invalid_action",
-                        "solve must finish without returning an answer",
-                        request_id,
-                    )
-                else:
-                    write_message(writer, Finished(**response_fields, request_id=request_id))
-                sequence += 2
-                continue
-            except Exception:
-                if advancing:
-                    discard(request_id)
-                failed(sequence + 1, "request.failed", "submission solve failed", request_id)
-                sequence += 2
-                continue
-            try:
-                action = CallAction.model_validate(candidate)
+                    candidate = model.route(message.input)
+                choice = ModelChoice.model_validate(candidate)
             except (TypeError, ValueError):
-                discard(request_id)
                 failed(
                     sequence + 1,
                     "request.invalid_action",
-                    "model yielded an invalid call",
-                    request_id,
+                    "route must return one ModelChoice",
+                    message.request_id,
                 )
-                sequence += 2
-                continue
-            write_message(
-                writer, CallRequested(**response_fields, request_id=request_id, action=action)
-            )
+            except Exception:
+                failed(
+                    sequence + 1, "request.failed", "submission route failed", message.request_id
+                )
+            else:
+                write_message(
+                    writer, Routed(**response_fields, request_id=message.request_id, model=choice)
+                )
         else:
-            failed(sequence + 1, "handshake.protocol", "expected Solve, Resume, or Shutdown")
+            failed(sequence + 1, "handshake.protocol", "expected Route or Shutdown")
             return
         sequence += 2
 

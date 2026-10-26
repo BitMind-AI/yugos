@@ -2,7 +2,7 @@
 
 The bundle runs in a `python -m yugos.submission.worker` subprocess driven by a
 `SubmissionSession`. Each Inspect generate call becomes one submission request:
-the router yields provider calls, `MeteredCalls` bounds and executes them, and
+the router selects a model, `MeteredCalls` executes the original request, and
 each executed call becomes a `ProviderReceipt` for the sample. Local hosting is
 not a sandbox: run only bundles you trust, such as your own.
 """
@@ -28,7 +28,7 @@ import anyio
 from inspect_ai.hooks import Hooks, hooks
 from inspect_ai.util import LimitExceededError
 
-from yugos.inference.actions import CallAction, CallOutput, ModelChoice
+from yugos.inference.actions import CallAction, ModelChoice
 from yugos.inference.calls import CallLimits, CallRecord, MeteredCalls, QuestionLimitExceeded
 from yugos.inspect_engine import (
     MemoryReceipts,
@@ -278,32 +278,15 @@ class LocalRouter:
         attempt = self._attempt(call)
         request_id = uuid.uuid4().hex
         first_call = len(self.meter.calls)
-        input = call.request
-        response = None
-        while True:
-            remaining = attempt.deadline - time.monotonic()
-            if remaining <= 0:
-                raise QuestionLimitExceeded("question time limit reached")
-            if response is None:
-                action = self.session.solve(input, request_id, timeout_s=remaining)
-            else:
-                action = self.session.resume(
-                    CallOutput(
-                        text=response.text,
-                        finish_reason=response.finish_reason,
-                        tool_calls=response.tool_calls,
-                        provider_state=response.provider_state,
-                    ),
-                    timeout_s=remaining,
-                )
-            if time.monotonic() > attempt.deadline:
-                raise QuestionLimitExceeded("question time limit reached")
-            if action is None:
-                break
-            dispatched[0] = True
-            response = self._dispatch(self.meter, action, call, attempt.deadline)
-        if response is None:
-            raise RouterError("submission finished without a provider answer")
+        remaining = attempt.deadline - time.monotonic()
+        if remaining <= 0:
+            raise QuestionLimitExceeded("question time limit reached")
+        choice = self.session.route(call.request, request_id, timeout_s=remaining)
+        if time.monotonic() > attempt.deadline:
+            raise QuestionLimitExceeded("question time limit reached")
+        action = CallAction(model=choice, input=call.request)
+        dispatched[0] = True
+        response = self._dispatch(self.meter, action, call, attempt.deadline)
         return reply(response, self.meter.calls[first_call:])
 
     async def service_call(
