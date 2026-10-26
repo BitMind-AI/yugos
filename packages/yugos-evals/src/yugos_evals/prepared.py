@@ -77,6 +77,7 @@ _MODULES = {
             "boxed_math",
             "reading",
             "cruxeval",
+            "swe_harness",
         )
     },
 }
@@ -422,6 +423,13 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         solver, scorer = module.reading_components(args.get("source", "belebele"))
     elif name == "cruxeval":
         scorer = module.cruxeval_output_scorer()
+    elif name == "swe_harness":
+        from inspect_evals.swe_bench.solvers import swe_bench_agent_with_inspect_tool_support
+
+        solver = swe_bench_agent_with_inspect_tool_support(
+            tool_timeout=args.get("tool_timeout", 210)
+        )
+        scorer = module.swe_harness_scorer()
     elif name == "code_tests":
         scorer = module.code_tests_scorer()
     elif name == "pairwise_judge":

@@ -61,6 +61,8 @@ target-version = "py311"
 line-length = 100
 # Package source roots, so each workspace package sorts as first-party.
 src = ["packages/*/src"]
+# SWE-bench's log parsers, vendored unchanged apart from their imports.
+extend-exclude = ["packages/yugos-evals/src/yugos_evals/scorers/swe_logs"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
