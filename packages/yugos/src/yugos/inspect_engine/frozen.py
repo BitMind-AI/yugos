@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from importlib.metadata import PackageNotFoundError, entry_points, version
+from importlib.metadata import entry_points, version
 
 from inspect_ai import Task
 from inspect_ai.dataset import Sample
@@ -62,13 +62,6 @@ class TaskConfig(BaseModel):
 
     def build(self, samples: Sequence[Sample], *, name: str, model_roles=None) -> Task:
         require_pinned_inspect()
-        for package, expected in self.packages.items():
-            try:
-                installed = version(package)
-            except PackageNotFoundError:
-                installed = None
-            if installed != expected:
-                raise ValueError(f"prepared task requires {package}=={expected}")
         registration = _task_builder(self.builder)
         if registration.dist.name not in self.packages:
             raise ValueError("task builder's distribution is not pinned")
