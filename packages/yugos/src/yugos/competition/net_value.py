@@ -423,8 +423,10 @@ def high_water_marks(
     """Replay promoted champions, oldest first, over the frozen panel-leader starting marks.
 
     A mark only rises. With `floor.use_lower_bound`, a champion contributes the lower
-    confidence bound of its quality rather than its mean.
+    confidence bound of its quality rather than its mean. Original wording-probe
+    copies never count, as in the gates.
     """
+    policy = policy.scored()
     config = policy.net_value
     marks = {
         rule.category: HighWaterMark(

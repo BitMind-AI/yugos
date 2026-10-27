@@ -177,6 +177,10 @@ def test_wording_probe_gates_the_paired_drop_and_scores_only_reworded_copies(
     assert (decision.wording.failed, decision.promoted) == (failed, promoted)
     gated = "wording sensitivity exceeds the reference" in decision.reasons
     assert gated == (failed and enforce)
+    # Published floors, like the gates, ignore the original copies.
+    floor = competition.high_water_marks(frozen, (challenger,))["chat_qa"].quality
+    unprobed = competition.high_water_marks(policy(), (challenger,))["chat_qa"].quality
+    assert (floor > unprobed) == (original == "0")
     assert "wording" not in policy().model_dump(mode="json")
 
 

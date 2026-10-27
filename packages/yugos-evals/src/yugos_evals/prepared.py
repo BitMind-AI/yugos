@@ -194,6 +194,8 @@ def prepare_task(task: Task, *, presented: bool = False, **options):
         # deterministic exact-match scorer on this task object too.
         module = importlib.import_module(_MODULES[name])
         task.scorer = [module.expression_exact_match()]
+    if presented and (fewshot_samples or args.get("fewshot")):
+        raise ValueError(f"few-shot {name} cannot be presented as written")
     builder_args = {"task": name, "args": args, "fewshot_samples": fewshot_samples}
     return freeze_task(
         task,
