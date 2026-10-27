@@ -1,7 +1,6 @@
 import copy
 import json
 import pickle
-from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -10,10 +9,8 @@ import pytest
 from yugos.competition import (
     CategoryMeasurement,
     CategoryRule,
-    CompetitionCohort,
     CompetitionHistory,
     CompetitionPolicy,
-    CompetitionPublication,
     CompetitionResult,
     CompetitionSnapshot,
     SubmissionMeasurement,
@@ -474,7 +471,7 @@ def test_snapshot_has_one_verified_champion_and_no_category_rewards():
     with pytest.raises(ValueError, match="pinned"):
         CompetitionSnapshot.read(raw, policy_sha256="b" * 64)
     raw["payload"]["history"]["challenges"][0]["decision"]["promoted"] = False
-    with pytest.raises(ValueError, match="replay"):
+    with pytest.raises(ValueError, match="does not match"):
         CompetitionSnapshot.model_validate(raw["payload"])
 
 
@@ -489,7 +486,7 @@ def test_nonfinite_or_negative_costs_are_rejected(bad):
         measured(spend={q: Decimal(bad) for q in ids("chat_qa")})
 
 
-def test_json_object_key_order_does_not_change_replay():
+def test_json_object_key_order_does_not_change_the_champion():
     candidate = submission(
         "mixed",
         overrides={
@@ -560,9 +557,7 @@ def test_a_hotkey_that_reclaims_the_throne_keeps_both_seats():
 
 @pytest.fixture
 def decisions(monkeypatch):
-    """Count challenge decisions with empty replay caches."""
-    monkeypatch.setattr(competition, "_decisions", competition.OrderedDict())
-    monkeypatch.setattr(competition, "_replays", competition.OrderedDict())
+    """Count challenge decisions."""
     calls = []
     real = competition.decide_challenge
 
@@ -590,129 +585,21 @@ def test_appending_and_reading_decide_each_challenge_once(decisions):
     assert len(decisions) == 5
 
 
-def test_same_content_replays_from_cache_and_equality_ignores_verification(decisions):
+def test_stored_decisions_are_read_as_recorded_without_deciding_again(decisions):
     history = kings("10", "8", "12")
     raw = history.model_dump(mode="json")
-    unverified = CompetitionHistory.model_validate(raw)
-    assert unverified == history
-    assert unverified.lineage() == history.lineage() and len(decisions) == 3
-    assert unverified == history and unverified.model_dump(mode="json") == raw
-    # A cached decision still has to match what is stored.
-    with pytest.raises(ValueError, match="replay"):
-        tampered(history, 1, promoted=False).champion()
-    assert len(decisions) == 3
-
-
-def test_incremental_verification_replays_only_the_new_suffix(decisions):
-    prior = kings("10", "8", "12")
-    newer = prior.challenge(submission("miner-3", cost="6")).challenge(submission("late", cost="5"))
-    raw = newer.model_dump(mode="json")
     decisions.clear()
-    competition._decisions.clear()
-    trusted = CompetitionHistory.model_validate(prior.model_dump(mode="json"))
-    verified = CompetitionHistory.model_validate(raw).verify(since=trusted)
-    assert decisions == ["miner-3", "late"]
-    assert verified.champion() == newer.champion() and len(decisions) == 2
-    with pytest.raises(ValueError, match="replay"):
-        tampered(newer, 4, reasons=["forged"]).verify(since=trusted)
-    with pytest.raises(ValueError, match="replay"):
-        tampered(newer, 4, reasons=["forged"]).verify()
-    with pytest.raises(ValueError, match="rolled back"):
-        prior.verify(since=newer)
-    with pytest.raises(ValueError, match="rolled back"):
-        kings("10", "9", "12", "6").verify(since=prior)
-
-
-def test_verified_prefix_is_trusted_as_given(decisions):
-    """Only the caller's own verified history belongs in `since`; its decisions are not replayed."""
-    forged = tampered(kings("10", "8"), 0, reasons=["forged"])
-    extended = CompetitionHistory.model_validate(
-        {
-            **forged.model_dump(mode="json"),
-            "challenges": [
-                *forged.model_dump(mode="json")["challenges"],
-                kings("10", "8", "6").model_dump(mode="json")["challenges"][-1],
-            ],
-        }
-    )
-    decisions.clear()
-    assert extended.verify(since=forged).champion().run_id == "miner-2"
-    # A history the caller stored itself can be adopted without any replay.
-    stored = CompetitionHistory.model_validate(extended.model_dump(mode="json"))
-    assert stored.verify(since=stored).champion().run_id == "miner-2"
+    restored = CompetitionHistory.model_validate(raw)
+    assert restored == history and restored.model_dump(mode="json") == raw
+    assert restored.lineage() == history.lineage() and decisions == []
+    # The host's recorded decisions are authoritative; reading does not re-decide them.
+    assert tampered(history, 1, promoted=False).champion().run_id == "miner-0"
     assert decisions == []
-    with pytest.raises(ValueError, match="replay"):
-        CompetitionHistory.model_validate(extended.model_dump(mode="json")).verify()
 
 
-def test_respelled_policy_cannot_use_a_verified_prefix_or_poison_the_cache(decisions):
-    """Equal-valued policies with different digests must not share cached decisions."""
-    history = kings("10", "8", "12")
-    raw = history.model_dump(mode="json")
-    raw["policy"]["net_value"]["min_net_value"] = "0.20"
-    respelled = CompetitionHistory.model_validate(raw).policy
-    assert respelled == history.policy and digest(respelled) != digest(history.policy)
-    forged = CompetitionHistory(policy=respelled)
-    for event in history.challenges:
-        forged = forged.challenge(event.measurement)
-    competition._decisions.clear()
-    with pytest.raises(ValueError, match="rolled back"):
-        CompetitionHistory.model_validate(forged.model_dump(mode="json")).verify(
-            since=CompetitionHistory(policy=history.policy)
-        )
-    honest = CompetitionHistory.model_validate(history.model_dump(mode="json"))
-    assert honest.verify().champion() == history.champion()
-
-
-@pytest.mark.parametrize(
-    ("part", "path", "spelling"),
-    [
-        ("measurement", ("categories", 0, "grades", "chat_qa-0"), "0.950"),
-        ("decision", ("min_net_value",), "0.20"),
-    ],
-)
-def test_respelled_prefix_fails_fresh_and_incremental_verification(decisions, part, path, spelling):
-    """Decimal equality ignores spelling; digests, and so stored decisions, do not."""
-    old = kings("10", "8")
-    raw = old.model_dump(mode="json")
-    node = raw["challenges"][1][part]
-    for key in path[:-1]:
-        node = node[key]
-    assert Decimal(node[path[-1]]) == Decimal(spelling) and node[path[-1]] != spelling
-    node[path[-1]] = spelling
-    new = CompetitionHistory.model_validate(raw)
-    assert new.challenges == old.challenges
-    with pytest.raises(ValueError, match="replay"):
-        new.verify()
-    with pytest.raises(ValueError, match="rolled back"):
-        new.verify(since=old)
-    shorter = CompetitionHistory(policy=old.policy, challenges=old.challenges[:1])
-    with pytest.raises(ValueError, match="replay"):
-        new.verify(since=shorter)
-
-    snapshot = CompetitionSnapshot(history=old, proposed_champion_run_id="miner-1")
-    payload = snapshot.model_dump(mode="json") | {"history": raw}
-    with pytest.raises(ValueError, match="rolled back"):
-        CompetitionSnapshot.read(
-            {"id": digest(payload), "payload": payload}, policy_sha256=digest(policy()), since=old
-        )
-    now = datetime.now(timezone.utc)
-    result = CompetitionResult(netuid=7, history=old).model_dump(mode="json") | {"history": raw}
-    published = {"id": digest(result), "confirmed_at": now.isoformat(), "payload": result}
-    for since in (old, None):
-        with pytest.raises(ValueError, match="rolled back" if since else "replay"):
-            CompetitionPublication.read(
-                published,
-                cohort=CompetitionCohort(netuid=7, policy_sha256=digest(policy())),
-                now=now,
-                max_age_s=60,
-                since=since,
-            )
-
-
-def test_records_are_deeply_immutable_so_verification_cannot_go_stale(decisions):
+def test_records_are_deeply_immutable(decisions):
     history = kings("10", "8")
-    assert history.verify().champion().run_id == "miner-1"
+    assert history.champion().run_id == "miner-1"
     with pytest.raises(TypeError):
         history.challenges[0].measurement.categories[0].grades["chat_qa-0"] = Decimal("0")
     row = history.challenges[1].measurement.categories[0]
@@ -737,7 +624,7 @@ def test_records_are_deeply_immutable_so_verification_cannot_go_stale(decisions)
         for mutate in mutations:
             with pytest.raises(TypeError):
                 mutate(mapping, key)
-    assert history.verify().champion().run_id == "miner-1" and len(decisions) == 2
+    assert history.champion().run_id == "miner-1" and len(decisions) == 2
 
     # Copies stay frozen; dumps stay plain, mutable JSON-compatible dicts.
     for copied in (
@@ -751,33 +638,6 @@ def test_records_are_deeply_immutable_so_verification_cannot_go_stale(decisions)
     dumped = history.model_dump()
     dumped["policy"]["net_value"]["categories"].clear()
     assert type(dumped["challenges"][1]["measurement"]["categories"][0]["grades"]) is dict
-
-
-def test_collected_histories_release_their_verified_lineage(decisions):
-    import gc
-
-    raw = kings("10", "8").model_dump(mode="json")
-    competition._replays.clear()
-    for _ in range(5):
-        CompetitionHistory.model_validate(raw).verify()
-    gc.collect()
-    kept = CompetitionHistory.model_validate(raw).verify()
-    assert list(competition._replays) == [id(kept)]
-
-
-def test_snapshot_read_can_verify_only_challenges_after_an_accepted_history(decisions):
-    prior = kings("10", "8")
-    history = prior.challenge(submission("miner-2", cost="6"))
-    snapshot = CompetitionSnapshot(history=history, proposed_champion_run_id="miner-2")
-    raw = {"id": digest(snapshot), "payload": snapshot.model_dump(mode="json")}
-    competition._decisions.clear()
-    decisions.clear()
-    read = CompetitionSnapshot.read(raw, policy_sha256=digest(policy()), since=prior)
-    assert read == snapshot and decisions == ["miner-2"]
-    raw["payload"]["history"]["challenges"][-1]["decision"]["promoted"] = False
-    raw["id"] = digest(raw["payload"])
-    with pytest.raises(ValueError, match="replay"):
-        CompetitionSnapshot.read(raw, policy_sha256=digest(policy()), since=prior)
 
 
 def test_retained_timing_labels_do_not_control_admission_or_change_evidence():
@@ -809,11 +669,11 @@ def test_new_policy_and_measurement_records_have_no_timing_label():
     assert digest(CompetitionPolicy.model_validate(raw)) == digest(raw)
 
 
-def test_previous_format_challenge_history_replays_with_the_same_commitment():
+def test_previous_format_challenge_history_loads_with_the_same_commitment():
     # Generated by the pre-spend competition code. Loading must not rewrite the digest.
     raw = json.loads(
         (Path(__file__).parent / "fixtures" / "legacy-competition-history.json").read_text()
     )
     history = CompetitionHistory.model_validate(raw)
     assert digest(history) == digest(raw)
-    assert history.verify().champion().miner_id == "miner-1"
+    assert history.champion().miner_id == "miner-1"

@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
-import weakref
-from collections import OrderedDict
 from datetime import datetime
 from decimal import Decimal, localcontext
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import (
     AwareDatetime,
@@ -17,7 +14,6 @@ from pydantic import (
     Field,
     PrivateAttr,
     SerializerFunctionWrapHandler,
-    ValidationInfo,
     model_serializer,
     model_validator,
 )
@@ -433,60 +429,6 @@ class Challenge(Record):
     decision: ChallengeDecision
 
 
-class _Replay(NamedTuple):
-    """Verified state after a history's challenges: its promoted lineage and content keys."""
-
-    policy_sha256: str
-    lineage: tuple[SubmissionMeasurement, ...] = ()
-    lineage_sha256: str = ""
-    comparisons: tuple[SubmissionMeasurement, ...] = ()
-
-    def advance(self, champion: SubmissionMeasurement, champion_sha256: str) -> _Replay:
-        chain = digest({"previous": self.lineage_sha256, "champion": champion_sha256})
-        return self._replace(
-            lineage=(*self.lineage, champion), lineage_sha256=chain,
-            comparisons=(*self.comparisons, champion),
-        )
-
-
-_CACHE_SIZE = 4096
-_cache_lock = threading.Lock()
-# Replayed decisions by content: policy, promoted lineage before the challenge, and challenger.
-_decisions: OrderedDict[str, ChallengeDecision] = OrderedDict()
-# Verified replay state by history object identity, so repeated reads skip re-hashing.
-_replays: OrderedDict[int, tuple[weakref.ref, _Replay]] = OrderedDict()
-
-
-def _lookup(cache: OrderedDict, key):
-    with _cache_lock:
-        value = cache.get(key)
-        if value is not None:
-            cache.move_to_end(key)
-        return value
-
-
-def _store(cache: OrderedDict, key, value):
-    with _cache_lock:
-        cache[key] = value
-        cache.move_to_end(key)
-        while len(cache) > _CACHE_SIZE:
-            cache.popitem(last=False)
-    return value
-
-
-def _replay_decision(
-    policy: CompetitionPolicy, state: _Replay, challenger: SubmissionMeasurement, sha256: str
-) -> ChallengeDecision:
-    """Decide once per process for the same policy, lineage, and challenger content."""
-    key = digest(
-        {"policy": state.policy_sha256, "lineage": state.lineage_sha256, "challenger": sha256}
-    )
-    decision = _lookup(_decisions, key)
-    if decision is None:
-        decision = _store(_decisions, key, decide_challenge(policy, challenger, state.comparisons))
-    return decision
-
-
 def _same_content(ours: Record, theirs: Record) -> bool:
     """Exact content identity. Value equality is not enough: Decimal equality ignores
     spelling such as "0.95" versus "0.950", but digests and stored decisions do not."""
@@ -510,119 +452,59 @@ class CompetitionHistory(Record):
             data.pop("prior_kings", None)
         return data
 
-    def _initial_state(self) -> _Replay:
+    @model_validator(mode="after")
+    def baseline_rebenchmarks_incumbent(self):
         if self.baseline is None:
             if self.prior_kings:
                 raise ValueError("inherited kings require a comparison baseline")
-            return _Replay(digest(self.policy))
+            return self
         if not self.prior_kings or self.policy.evidence_errors(self.baseline):
             raise ValueError("baseline requires complete evidence and prior reward seats")
         king = self.prior_kings[-1]
-        if (self.baseline.miner_id != king.miner_id
-                or self.baseline.categories[0].submission_sha256 != king.categories[0].submission_sha256
-                or self.baseline.run_id in {row.run_id for row in self.prior_kings}):
+        if (
+            self.baseline.miner_id != king.miner_id
+            or self.baseline.categories[0].submission_sha256
+            != king.categories[0].submission_sha256
+            or self.baseline.run_id in {row.run_id for row in self.prior_kings}
+        ):
             raise ValueError("baseline must rebenchmark the incumbent submission")
-        return _Replay(digest(self.policy), self.prior_kings,
-                       digest({"baseline": digest(self.baseline),
-                               "kings": [digest(row) for row in self.prior_kings]}),
-                       (self.baseline,))
-
-    def verify(self, *, since: CompetitionHistory | None = None) -> CompetitionHistory:
-        """Replay every stored decision and return this history when they all match.
-
-        `since` is a history the caller has already verified or otherwise trusts,
-        such as the last snapshot a validator accepted. This history must repeat it
-        exactly, including its policy and baseline. Its stored decisions are trusted
-        and only later challenges replay.
-        Without it, verification starts from the first challenge. Records are deeply immutable,
-        so the result is remembered for this object and later `lineage()`,
-        `champion()`, and `high_water_marks()` calls do not replay again.
-        """
-        self._replay(since)
         return self
 
-    def _replay(self, since: CompetitionHistory | None = None) -> _Replay:
-        start = 0 if since is None else len(since.challenges)
-        if since is not None and (
-            not _same_content(since.policy, self.policy)
-            or since._initial_state().lineage_sha256 != self._initial_state().lineage_sha256
-            or len(self.challenges) < start
-            or not all(map(_same_content, self.challenges, since.challenges))
-        ):
-            raise ValueError("history rolled back or rewrote the verified prefix")
-        verified = self._verified()
-        if verified is not None:
-            return verified
-        run_ids = [event.measurement.run_id for event in self.challenges]
-        reserved = {row.run_id for row in self.prior_kings}
-        if self.baseline:
-            reserved.add(self.baseline.run_id)
-        if len(set(run_ids)) != len(run_ids) or reserved.intersection(run_ids):
-            raise ValueError("duplicate challenge run")
-        state = self._initial_state() if since is None else since._trusted_replay()
-        for event in self.challenges[start:]:
-            sha256 = digest(event.measurement)
-            expected = _replay_decision(self.policy, state, event.measurement, sha256)
-            if not _same_content(expected, event.decision):
-                raise ValueError("challenge decision does not match replay")
-            if expected.promoted:
-                state = state.advance(event.measurement, sha256)
-        return self._remember(state)
-
-    def _trusted_replay(self) -> _Replay:
-        """Replay state from stored decisions, reusing verification when this object has it."""
-        verified = self._verified()
-        if verified is not None:
-            return verified
-        state = self._initial_state()
-        for event in self.challenges:
-            if event.decision.promoted:
-                state = state.advance(event.measurement, digest(event.measurement))
-        return state
-
-    def _verified(self) -> _Replay | None:
-        entry = _lookup(_replays, id(self))
-        return entry[1] if entry is not None and entry[0]() is self else None
-
-    def _remember(self, state: _Replay) -> _Replay:
-        # Drop states of collected histories so they do not keep their lineages alive.
-        with _cache_lock:
-            for key in [key for key, (ref, _) in _replays.items() if ref() is None]:
-                del _replays[key]
-        return _store(_replays, id(self), (weakref.ref(self), state))[1]
+    def _promoted(self) -> tuple[SubmissionMeasurement, ...]:
+        return tuple(event.measurement for event in self.challenges if event.decision.promoted)
 
     def lineage(self) -> tuple[SubmissionMeasurement, ...]:
-        """Promoted champions from oldest to newest. Stored decisions must replay."""
-        return self._replay().lineage
+        """Reward-seat kings from oldest to newest, as recorded."""
+        return (*self.prior_kings, *self._promoted())
 
     def champion(self) -> SubmissionMeasurement | None:
         kings = self.comparison_lineage()
         return kings[-1] if kings else None
 
     def comparison_lineage(self) -> tuple[SubmissionMeasurement, ...]:
-        """Measurements on the active pack, seeded by its incumbent top-up."""
-        return self._replay().comparisons
+        """Measurements on the active pack, seeded by its incumbent baseline."""
+        baseline = (self.baseline,) if self.baseline else ()
+        return (*baseline, *self._promoted())
 
     def high_water_marks(self) -> dict[str, HighWaterMark]:
-        """Current category floors, replayed from the promoted lineage."""
+        """Current category floors from the active pack's comparison lineage."""
         return high_water_marks(self.policy, self.comparison_lineage())
 
     def challenge(self, measurement: SubmissionMeasurement) -> CompetitionHistory:
-        """Append one decided challenge; only the new challenge is decided."""
-        state = self._replay()
+        """Decide one new challenge against the current king and append it."""
         for event in self.challenges:
             if event.measurement.run_id == measurement.run_id:
                 if not _same_content(event.measurement, measurement):
                     raise ValueError("challenge run conflicts with retained evidence")
                 return self
-        sha256 = digest(measurement)
-        decision = _replay_decision(self.policy, state, measurement, sha256)
-        event = Challenge(measurement=measurement, decision=decision)
-        if measurement.run_id in {row.run_id for row in (*self.prior_kings, *((self.baseline,) if self.baseline else ()))}:
+        reserved = {row.run_id for row in self.prior_kings}
+        if self.baseline:
+            reserved.add(self.baseline.run_id)
+        if measurement.run_id in reserved:
             raise ValueError("duplicate challenge run")
-        history = self.model_copy(update={"challenges": (*self.challenges, event)})
-        history._remember(state.advance(measurement, sha256) if decision.promoted else state)
-        return history
+        decision = decide_challenge(self.policy, measurement, self.comparison_lineage())
+        event = Challenge(measurement=measurement, decision=decision)
+        return self.model_copy(update={"challenges": (*self.challenges, event)})
 
 
 class CompetitionSnapshot(Record):
@@ -635,23 +517,20 @@ class CompetitionSnapshot(Record):
     proposed_champion_run_id: str | None
 
     @classmethod
-    def read(
-        cls, raw: dict, *, policy_sha256: str, since: CompetitionHistory | None = None
-    ) -> CompetitionSnapshot:
-        """Check the digest and pinned policy, then replay challenges after `since`."""
+    def read(cls, raw: dict, *, policy_sha256: str) -> CompetitionSnapshot:
+        """Check the digest and pinned policy."""
         if raw.get("id") != digest(raw.get("payload", {})):
             raise ValueError("competition snapshot digest differs")
-        snapshot = cls.model_validate(raw["payload"], context={"verified_history": since})
+        snapshot = cls.model_validate(raw["payload"])
         if digest(snapshot.history.policy) != policy_sha256:
             raise ValueError("snapshot differs from the pinned competition policy")
         return snapshot
 
     @model_validator(mode="after")
-    def verify(self, info: ValidationInfo):
-        since = (info.context or {}).get("verified_history")
-        champion = self.history.verify(since=since).champion()
+    def proposed_champion_matches(self):
+        champion = self.history.champion()
         if self.proposed_champion_run_id != (champion.run_id if champion else None):
-            raise ValueError("proposed overall champion does not match replay")
+            raise ValueError("proposed overall champion does not match the history")
         return self
 
 
@@ -688,7 +567,7 @@ def king_weights(kings: Sequence[str]) -> dict[str, float]:
 
 
 class CompetitionResult(Record):
-    """Replayable production result; the configured HTTPS host attests its evidence."""
+    """Production result; the configured HTTPS host attests its evidence."""
 
     schema_version: Literal["yugos-overall-result-v2"] = "yugos-overall-result-v2"
     netuid: int = Field(gt=0, strict=True)
@@ -719,9 +598,8 @@ class CompetitionPublication(Record):
         cohort: CompetitionCohort,
         now: datetime,
         max_age_s: float,
-        since: CompetitionHistory | None = None,
     ) -> CompetitionPublication:
-        """Check identity, pinned policy, and freshness, then replay challenges after `since`."""
+        """Check identity, pinned policy, and freshness."""
         publication = cls.model_validate(raw)
         payload = publication.payload
         if digest(raw["payload"]) != publication.id:
@@ -736,5 +614,4 @@ class CompetitionPublication(Record):
             raise ValueError("publication differs from the pinned competition policy")
         if not 0 <= (now - publication.confirmed_at).total_seconds() <= max_age_s:
             raise ValueError("competition confirmation is stale or dated in the future")
-        payload.history.verify(since=since)
         return publication
