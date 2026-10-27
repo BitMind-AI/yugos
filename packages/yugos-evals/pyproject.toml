@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yugos-evals"
-version = "0.2.0"
+version = "0.2.1"
 description = "Yugos benchmark catalog, missing Inspect tasks and local evaluation tools"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "yugos[inspect]>=0.3,<0.4",
+    "yugos[inspect]>=0.4,<0.5",
     # Same exact pin as yugos[inspect]; frozen recipes record the Inspect Evals release.
     "inspect-evals==0.22.0",
     # Source loaders fetch pinned files; math answers are checked with Math-Verify.

@@ -156,3 +156,9 @@ default is the official `python:3.12-slim` index; pass
 3.11+ and the standard library. A `local` sandbox is refused.
 
 Contributor test instructions are in the [repository development guide](../../README.md#development).
+
+Trusted runtimes can install additional prepared task constructors through the
+`yugos_evals.prepared_tasks` entry-point group, keyed by the exact frozen task
+name. Constructors receive `options`, `args` and `fewshot_samples`; they must
+use the provided samples without acquiring data. Built-in task names keep their
+native constructors. Missing or duplicate registrations are rejected.

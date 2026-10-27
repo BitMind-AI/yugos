@@ -6,6 +6,7 @@ import importlib
 import inspect
 import json
 from datetime import datetime
+from importlib.metadata import entry_points
 from pathlib import Path
 
 from inspect_ai import Task
@@ -190,7 +191,10 @@ def _mbpp_template(task: Task) -> str:
 def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] = ()) -> Task:
     """Build native solvers, agents, tools and scorers without calling source factories."""
     if task not in _MODULES:
-        raise ValueError(f"unknown prepared task: {task}")
+        extensions = list(entry_points(group="yugos_evals.prepared_tasks", name=task))
+        if len(extensions) != 1:
+            raise ValueError(f"prepared task needs one installed constructor: {task}")
+        return extensions[0].load()(options=options, args=args, fewshot_samples=fewshot_samples)
     module = importlib.import_module(_MODULES[task])
     name = task.split("/")[1]
     solver, scorer, setup, metrics = generate(), None, None, None
