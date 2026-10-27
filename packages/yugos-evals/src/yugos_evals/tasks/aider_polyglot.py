@@ -124,6 +124,10 @@ def _sample(key: str, files: dict[str, bytes]) -> Sample:
         _gold_target(path, config["solution"]): files[path].decode()
         for path in config.get("example", [])
     }
+    reference = ".meta/src/reference/java/"
+    for path in files:  # Java references may span more files than the config lists
+        if language == "java" and path.startswith(reference):
+            example.setdefault(f"src/main/java/{path[len(reference) :]}", files[path].decode())
     if language == "rust" and ".meta/Cargo-example.toml" in files:
         example["Cargo.toml"] = files[".meta/Cargo-example.toml"].decode()
     editable = [s for s in config["solution"] if s not in _IGNORED and s not in tests]
