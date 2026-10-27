@@ -439,10 +439,14 @@ class _Replay(NamedTuple):
     policy_sha256: str
     lineage: tuple[SubmissionMeasurement, ...] = ()
     lineage_sha256: str = ""
+    comparisons: tuple[SubmissionMeasurement, ...] = ()
 
     def advance(self, champion: SubmissionMeasurement, champion_sha256: str) -> _Replay:
         chain = digest({"previous": self.lineage_sha256, "champion": champion_sha256})
-        return self._replace(lineage=(*self.lineage, champion), lineage_sha256=chain)
+        return self._replace(
+            lineage=(*self.lineage, champion), lineage_sha256=chain,
+            comparisons=(*self.comparisons, champion),
+        )
 
 
 _CACHE_SIZE = 4096
@@ -479,7 +483,7 @@ def _replay_decision(
     )
     decision = _lookup(_decisions, key)
     if decision is None:
-        decision = _store(_decisions, key, decide_challenge(policy, challenger, state.lineage))
+        decision = _store(_decisions, key, decide_challenge(policy, challenger, state.comparisons))
     return decision
 
 
@@ -489,20 +493,123 @@ def _same_content(ours: Record, theirs: Record) -> bool:
     return ours is theirs or digest(ours) == digest(theirs)
 
 
+class PackRevision(Record):
+    """An addition-only pack change with the same king and a fresh comparison baseline."""
+
+    contest: Name
+    previous_pack_sha256: Digest
+    pack_sha256: Digest
+    previous: CompetitionHistory
+    baseline: SubmissionMeasurement
+
+    def validate_transition(self, policy: CompetitionPolicy) -> None:
+        previous = self.previous
+        king = previous.champion()
+        if king is None:
+            raise ValueError("a pack revision requires an incumbent")
+        if self.previous_pack_sha256 == self.pack_sha256:
+            raise ValueError("a pack revision requires a different pack")
+        if previous.pack_revision is not None and (
+            previous.pack_revision.contest != self.contest
+            or previous.pack_revision.pack_sha256 != self.previous_pack_sha256
+        ):
+            raise ValueError("pack revision does not extend the same contest and pack")
+        self.validate_policy(previous.policy, policy)
+        baseline = self.baseline
+        if (baseline.miner_id != king.miner_id
+                or baseline.categories[0].submission_sha256 != king.categories[0].submission_sha256
+                or baseline.run_id in previous.run_ids()):
+            raise ValueError("revision baseline must be a new run of the incumbent submission")
+        if policy.evidence_errors(baseline):
+            raise ValueError("revision baseline is incomplete or incompatible")
+        for name, old in king.by_category().items():
+            new = baseline.by_category()[name]
+            if any(new.grades[q] != grade or new.question_spend_usd[q] != old.question_spend_usd[q]
+                   for q, grade in old.grades.items()):
+                raise ValueError("revision baseline rewrote retained grades or spend")
+            if old.question_time_ns is not None and (
+                new.question_time_ns is None
+                or any(new.question_time_ns[q] != ns for q, ns in old.question_time_ns.items())
+            ):
+                raise ValueError("revision baseline rewrote retained question time")
+            if new.execution_time_ns < old.execution_time_ns:
+                raise ValueError("revision baseline lost retained execution time")
+
+    @staticmethod
+    def validate_policy(previous: CompetitionPolicy, policy: CompetitionPolicy) -> None:
+        """Check addition-only coverage and unchanged scoring before a benchmark is funded."""
+        if not _same_content(previous.net_value, policy.net_value):
+            raise ValueError("a pack revision must preserve the scoring rule")
+        before = {rule.category: rule for rule in previous.categories}
+        after = {rule.category: rule for rule in policy.categories}
+        if set(before) != set(after):
+            raise ValueError("a pack revision must preserve categories")
+        added = 0
+        for name, old in before.items():
+            new = after[name]
+            kept = set(old.question_ids)
+            if old.cohort_sha256 != new.cohort_sha256 or not kept <= set(new.question_ids):
+                raise ValueError("a pack revision must retain the contest and all old questions")
+            for subset in ("hard_question_ids", "private_question_ids"):
+                if set(getattr(new, subset)) & kept != set(getattr(old, subset)):
+                    raise ValueError("retained question subsets changed")
+            added += len(set(new.question_ids) - kept)
+        if not added:
+            raise ValueError("a pack revision must add questions")
+
+
 class CompetitionHistory(Record):
     """One ordered challenge history and one overall incumbent."""
 
     policy: CompetitionPolicy
     challenges: tuple[Challenge, ...] = ()
+    pack_revision: PackRevision | None = None
+
+    @model_serializer(mode="wrap")
+    def retain_legacy_identity(self, handler):
+        data = handler(self)
+        if self.pack_revision is None:
+            data.pop("pack_revision", None)
+        return data
+
+    def epochs(self) -> tuple[CompetitionHistory, ...]:
+        """Frozen pack histories in their original scoring order."""
+        prior = self.pack_revision.previous.epochs() if self.pack_revision else ()
+        return (*prior, self)
+
+    def run_ids(self) -> set[str]:
+        """Every admitted challenge and baseline run across the frozen revisions."""
+        result = set()
+        for epoch in self.epochs():
+            result.update(event.measurement.run_id for event in epoch.challenges)
+            if epoch.pack_revision:
+                result.add(epoch.pack_revision.baseline.run_id)
+        return result
+
+    def _initial_state(self, since=None, *, trusted=False) -> _Replay:
+        if self.pack_revision is None:
+            if since is not None:
+                raise ValueError("history rolled back or rewrote the verified prefix")
+            return _Replay(digest(self.policy))
+        revision = self.pack_revision
+        if trusted:
+            revision.previous._remember(revision.previous._trusted_replay())
+        else:
+            revision.previous.verify(since=since)
+        revision.validate_transition(self.policy)
+        return _Replay(
+            digest(self.policy), revision.previous.lineage(), digest(revision),
+            (revision.baseline,),
+        )
 
     def verify(self, *, since: CompetitionHistory | None = None) -> CompetitionHistory:
         """Replay every stored decision and return this history when they all match.
 
         `since` is a history the caller has already verified or otherwise trusts,
         such as the last snapshot a validator accepted. This history must repeat it
-        exactly, with the same policy and challenge digests; its stored decisions are
-        trusted as given and only the later challenges are replayed. Without it,
-        verification starts from the first challenge. Records are deeply immutable,
+        exactly within its original policy, either in this epoch or a linked prior
+        revision. Its stored decisions are trusted and only later challenges replay.
+        Without it, verification starts from the first challenge. Records are deeply immutable,
         so the result is remembered for this object and later `lineage()`,
         `champion()`, and `high_water_marks()` calls do not replay again.
         """
@@ -510,20 +617,32 @@ class CompetitionHistory(Record):
         return self
 
     def _replay(self, since: CompetitionHistory | None = None) -> _Replay:
-        start = 0 if since is None else len(since.challenges)
-        if since is not None and (
-            not _same_content(since.policy, self.policy)
+        same_epoch = since is not None and _same_content(since.policy, self.policy)
+        start = len(since.challenges) if same_epoch else 0
+        same_revision = since is not None and (
+            since.pack_revision is self.pack_revision
+            or (since.pack_revision is not None and self.pack_revision is not None
+                and _same_content(since.pack_revision, self.pack_revision))
+        )
+        if same_epoch and (
+            not same_revision
             or len(self.challenges) < start
             or not all(map(_same_content, self.challenges, since.challenges))
         ):
             raise ValueError("history rolled back or rewrote the verified prefix")
+        if since is not None and not same_epoch:
+            self._initial_state(since)
         verified = self._verified()
         if verified is not None:
             return verified
-        run_ids = {event.measurement.run_id for event in self.challenges}
-        if len(run_ids) != len(self.challenges):
+        prior_ids = (
+            self.pack_revision.previous.run_ids() | {self.pack_revision.baseline.run_id}
+            if self.pack_revision else set()
+        )
+        run_ids = [event.measurement.run_id for event in self.challenges]
+        if len(set(run_ids)) != len(run_ids) or prior_ids.intersection(run_ids):
             raise ValueError("duplicate challenge run")
-        state = _Replay(digest(self.policy)) if since is None else since._trusted_replay()
+        state = since._trusted_replay() if same_epoch else self._initial_state()
         for event in self.challenges[start:]:
             sha256 = digest(event.measurement)
             expected = _replay_decision(self.policy, state, event.measurement, sha256)
@@ -538,7 +657,7 @@ class CompetitionHistory(Record):
         verified = self._verified()
         if verified is not None:
             return verified
-        state = _Replay(digest(self.policy))
+        state = self._initial_state(trusted=True)
         for event in self.challenges:
             if event.decision.promoted:
                 state = state.advance(event.measurement, digest(event.measurement))
@@ -560,12 +679,16 @@ class CompetitionHistory(Record):
         return self._replay().lineage
 
     def champion(self) -> SubmissionMeasurement | None:
-        kings = self.lineage()
+        kings = self.comparison_lineage()
         return kings[-1] if kings else None
+
+    def comparison_lineage(self) -> tuple[SubmissionMeasurement, ...]:
+        """Measurements on the active pack, seeded by its incumbent top-up."""
+        return self._replay().comparisons
 
     def high_water_marks(self) -> dict[str, HighWaterMark]:
         """Current category floors, replayed from the promoted lineage."""
-        return high_water_marks(self.policy, self.lineage())
+        return high_water_marks(self.policy, self.comparison_lineage())
 
     def challenge(self, measurement: SubmissionMeasurement) -> CompetitionHistory:
         """Append one decided challenge; only the new challenge is decided."""
@@ -578,7 +701,9 @@ class CompetitionHistory(Record):
         sha256 = digest(measurement)
         decision = _replay_decision(self.policy, state, measurement, sha256)
         event = Challenge(measurement=measurement, decision=decision)
-        history = CompetitionHistory(policy=self.policy, challenges=(*self.challenges, event))
+        if measurement.run_id in self.run_ids():
+            raise ValueError("duplicate challenge run")
+        history = self.model_copy(update={"challenges": (*self.challenges, event)})
         history._remember(state.advance(measurement, sha256) if decision.promoted else state)
         return history
 

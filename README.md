@@ -66,6 +66,9 @@ validators that only submit or set weights do not need it.
 The evaluation service prepares the live benchmark and runs submissions. This
 repository does not download competition datasets at grade time.
 
+Competition history supports explicit [pack revisions](docs/pack-revisions.md) that
+retain the king and reward seats. A new contest can still start with empty history.
+
 ## Development
 
 The repository is a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/).
