@@ -68,7 +68,7 @@ def upgraded(previous=None):
 
 def test_revision_does_not_promote_and_next_challenge_uses_expanded_king():
     previous = CompetitionHistory(policy=policy()).challenge(measured())
-    new = upgraded(previous).verify()
+    new = upgraded(previous)
     assert new.lineage() == previous.lineage()
     assert new.champion().run_id == "top-up"
     assert new.comparison_lineage() == (new.baseline,)
@@ -77,14 +77,16 @@ def test_revision_does_not_promote_and_next_challenge_uses_expanded_king():
     assert next_history.challenges[-1].decision.incumbent_sha256 == digest(new.champion())
     assert next_history.challenges[-1].decision.promoted
     assert CompetitionResult(netuid=34, history=next_history).weights() == {"b": 0.9, "a": 0.1}
-    CompetitionHistory.model_validate(next_history.model_dump(mode="json")).verify()
+    restored = CompetitionHistory.model_validate(next_history.model_dump(mode="json"))
+    assert restored.lineage() == next_history.lineage()
+    assert restored.champion() == next_history.champion()
 
 
 def test_revision_preserves_three_reward_seats():
     old = CompetitionHistory(policy=policy())
     for name, price in (("a", "3"), ("b", "2"), ("c", "1")):
         old = old.challenge(measured(name, price=price))
-    new = upgraded(old).verify()
+    new = upgraded(old)
     assert CompetitionResult(netuid=34, history=new).weights() == {"c": 0.85, "b": 0.1, "a": 0.05}
     assert len(new.lineage()) == 3
 
@@ -99,18 +101,11 @@ def test_baseline_requires_the_incumbent_and_complete_evidence(change):
     else:
         raw["prior_kings"] = []
     with pytest.raises(ValueError):
-        CompetitionHistory.model_validate(raw).verify()
-
-
-def test_revision_rejects_rollback_even_after_cached_verification():
-    new = upgraded().verify()
-    unrelated = CompetitionHistory(policy=policy()).challenge(measured("different"))
-    with pytest.raises(ValueError, match="prefix"):
-        new.verify(since=unrelated)
+        CompetitionHistory.model_validate(raw)
 
 
 def test_full_reset_still_has_no_king_or_inherited_history():
-    old = upgraded().verify()
+    old = upgraded()
     reset = CompetitionHistory(policy=old.policy)
     assert reset.lineage() == () and reset.champion() is None
     assert CompetitionResult(netuid=34, history=reset).weights() == {}
@@ -120,12 +115,12 @@ def test_full_reset_still_has_no_king_or_inherited_history():
 
 
 def test_another_baseline_preserves_reward_seats_without_nested_histories():
-    first = upgraded().verify()
+    first = upgraded()
     second = CompetitionHistory(
         policy=policy(("old", "new", "next")),
         baseline=measured("second-top-up", miner="a", ids=("old", "new", "next")),
         prior_kings=first.lineage()[-3:],
-    ).verify()
+    )
     assert len(second.lineage()) == 1 and second.champion().run_id == "second-top-up"
     assert "previous" not in second.model_dump(mode="json")
     with pytest.raises(ValueError, match="duplicate"):

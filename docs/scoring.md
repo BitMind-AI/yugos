@@ -97,7 +97,7 @@ Questions with the same solve share stay on the same side of the line.
 
 The evaluation service publishes a confirmed result. Validators check the
 content hash, the subnet, the competition major version, and the confirmation
-time. They replay the champion list into weights and map hotkeys to current
+time. They turn the published champion list into weights and map hotkeys to current
 UIDs.
 
 A paused result, an empty history, or an unregistered current champion
