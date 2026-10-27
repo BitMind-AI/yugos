@@ -10,7 +10,6 @@ from yugos.competition import (
     CompetitionHistory,
     CompetitionPolicy,
     CompetitionResult,
-    PackRevision,
     SubmissionMeasurement,
     digest,
 )
@@ -62,30 +61,23 @@ def upgraded(previous=None):
     previous = previous or CompetitionHistory(policy=policy()).challenge(measured())
     baseline = measured("top-up", miner=previous.champion().miner_id, ids=("old", "new"))
     return CompetitionHistory(
-        policy=policy(("old", "new")),
-        pack_revision=PackRevision(
-            contest="contest",
-            previous_pack_sha256="1" * 64,
-            pack_sha256="2" * 64,
-            previous=previous,
-            baseline=baseline,
-        ),
+        policy=policy(("old", "new")), baseline=baseline,
+        prior_kings=previous.lineage()[-3:],
     )
 
 
 def test_revision_does_not_promote_and_next_challenge_uses_expanded_king():
     previous = CompetitionHistory(policy=policy()).challenge(measured())
-    new = upgraded(previous).verify(since=previous)
+    new = upgraded(previous).verify()
     assert new.lineage() == previous.lineage()
     assert new.champion().run_id == "top-up"
-    assert new.comparison_lineage() == (new.pack_revision.baseline,)
+    assert new.comparison_lineage() == (new.baseline,)
     assert CompetitionResult(netuid=34, history=new).weights() == {"a": 1.0}
     next_history = new.challenge(measured("b", ids=("old", "new"), price="0.1"))
     assert next_history.challenges[-1].decision.incumbent_sha256 == digest(new.champion())
     assert next_history.challenges[-1].decision.promoted
     assert CompetitionResult(netuid=34, history=next_history).weights() == {"b": 0.9, "a": 0.1}
-    assert next_history.pack_revision.previous.challenges == previous.challenges
-    CompetitionHistory.model_validate(next_history.model_dump(mode="json")).verify(since=previous)
+    CompetitionHistory.model_validate(next_history.model_dump(mode="json")).verify()
 
 
 def test_revision_preserves_three_reward_seats():
@@ -97,27 +89,15 @@ def test_revision_preserves_three_reward_seats():
     assert len(new.lineage()) == 3
 
 
-@pytest.mark.parametrize(
-    "change", ["identity", "grade", "spend", "time", "removed", "scoring", "history"]
-)
-def test_revision_rejects_rewritten_evidence_or_rules(change):
-    new = upgraded()
-    raw = new.model_dump(mode="json")
-    baseline = raw["pack_revision"]["baseline"]["categories"][0]
+@pytest.mark.parametrize("change", ["identity", "incomplete", "missing_seats"])
+def test_baseline_requires_the_incumbent_and_complete_evidence(change):
+    raw = upgraded().model_dump(mode="json")
     if change == "identity":
-        baseline["miner_id"] = "other"
-    elif change == "grade":
-        baseline["grades"]["old"] = "0"
-    elif change == "spend":
-        baseline["question_spend_usd"].update(old="0.5", new="1.5")
-    elif change == "time":
-        baseline["question_time_ns"].update(old=500, new=1500)
-    elif change == "removed":
-        raw["policy"]["categories"][0]["question_ids"] = ["new"]
-    elif change == "scoring":
-        raw["policy"]["net_value"]["m"] = "123"
+        raw["baseline"]["categories"][0]["miner_id"] = "other"
+    elif change == "incomplete":
+        raw["baseline"]["categories"][0]["execution_complete"] = False
     else:
-        raw["pack_revision"]["previous"]["challenges"][0]["decision"]["reasons"] = ["forged"]
+        raw["prior_kings"] = []
     with pytest.raises(ValueError):
         CompetitionHistory.model_validate(raw).verify()
 
@@ -134,23 +114,19 @@ def test_full_reset_still_has_no_king_or_inherited_history():
     reset = CompetitionHistory(policy=old.policy)
     assert reset.lineage() == () and reset.champion() is None
     assert CompetitionResult(netuid=34, history=reset).weights() == {}
-    assert "pack_revision" not in reset.model_dump(mode="json")
+    assert "baseline" not in reset.model_dump(mode="json")
+    assert "prior_kings" not in reset.model_dump(mode="json")
     assert reset.challenge(measured("fresh", ids=("old", "new"))).champion().miner_id == "fresh"
 
 
-def test_multiple_revisions_verify_the_original_prefix_without_extra_reward_seats():
+def test_another_baseline_preserves_reward_seats_without_nested_histories():
     first = upgraded().verify()
     second = CompetitionHistory(
         policy=policy(("old", "new", "next")),
-        pack_revision=PackRevision(
-            contest="contest",
-            previous_pack_sha256="2" * 64,
-            pack_sha256="3" * 64,
-            previous=first,
-            baseline=measured("second-top-up", miner="a", ids=("old", "new", "next")),
-        ),
-    ).verify(since=first.pack_revision.previous)
-    assert len(second.epochs()) == 3
+        baseline=measured("second-top-up", miner="a", ids=("old", "new", "next")),
+        prior_kings=first.lineage()[-3:],
+    ).verify()
     assert len(second.lineage()) == 1 and second.champion().run_id == "second-top-up"
+    assert "previous" not in second.model_dump(mode="json")
     with pytest.raises(ValueError, match="duplicate"):
-        second.challenge(second.pack_revision.baseline)
+        second.challenge(second.baseline)
