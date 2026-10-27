@@ -13,6 +13,7 @@ from .math_answer import math_answer
 from .pairwise_judge import pairwise_judge
 from .reading import reading
 from .rubric_chat import rubric_chat
+from .spider2_lite import spider2_lite
 
 __all__ = [
     "boxed_math",
@@ -22,4 +23,5 @@ __all__ = [
     "pairwise_judge",
     "rubric_chat",
     "reading",
+    "spider2_lite",
 ]
