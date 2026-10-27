@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yugos"
-version = "0.3.0"
+version = "0.4.0"
 description = "Competition rules and evaluation for trained model routers"
 readme = "README.md"
 requires-python = ">=3.11"
