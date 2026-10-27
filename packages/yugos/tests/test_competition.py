@@ -150,6 +150,35 @@ def test_categories_without_hard_questions_still_decide():
         assert category.net_value.n_hard == 0 and category.net_value.hard_answer_delta == 0
 
 
+@pytest.mark.parametrize(
+    "reworded,min_pairs,enforce,failed,promoted",
+    [
+        ("0", 20, True, True, False),  # wording-keyed router is gated
+        ("0", 20, False, True, True),  # report-only: probe losses leave net value alone
+        ("1", 20, True, False, True),
+        ("0", 100, True, False, True),  # too few pairs to judge
+    ],
+)
+def test_wording_probe_gates_the_paired_drop_but_not_net_value(
+    reworded, min_pairs, enforce, failed, promoted
+):
+    pairs = tuple((f"chat_qa-{i}", f"chat_qa-{i + 40}") for i in range(10, 50))
+    probe = competition.WordingProbe(
+        pairs=pairs, reference_drop=Decimal("0.02"), min_pairs=min_pairs, enforce=enforce
+    )
+    frozen = policy().model_copy(update={"wording": probe})
+    frozen = CompetitionPolicy.model_validate(frozen.model_dump(mode="json"))
+    grades = {qid: Decimal(1) for qid in ids("chat_qa")} | {
+        reworded_id: Decimal(reworded) for _, reworded_id in pairs
+    }
+    challenger = submission("cheap", cost="8", overrides={"chat_qa": {"grades": grades}})
+    king = submission(overrides={"chat_qa": {"quality": "1"}})
+    decision = decide_challenge(frozen, challenger, (king,))
+    assert (decision.wording.failed, decision.promoted) == (failed, promoted)
+    assert decision.categories["chat_qa"].gates.quality == 1
+    assert "wording" not in policy().model_dump(mode="json")
+
+
 def test_cheaper_equal_quality_challenger_wins_and_breakdown_is_reported():
     decision = decide_challenge(policy(), submission("cheap", cost="8"), (submission(),))
     assert decision.promoted and decision.eligible

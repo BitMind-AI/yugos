@@ -188,6 +188,43 @@ def test_new_text_tasks_keep_native_request_and_grade_without_reloading_source(
     assert results[0] == results[1]
 
 
+@pytest.mark.parametrize("answer,grade", [("ANSWER: A", "C"), ("ANSWER: B", "I")])
+def test_presented_choice_prompt_reaches_the_router_as_written(
+    answer, grade, monkeypatch, tmp_path
+):
+    # A leftover native template would let a router recognise the benchmark.
+    import inspect_ai._util.appdirs as appdirs
+    from inspect_ai import task_with
+
+    from yugos_evals.prepared import prepare_task
+
+    monkeypatch.setattr(appdirs, "user_data_path", lambda _name: tmp_path / "inspect-data")
+    module = importlib.import_module("inspect_evals.arc.arc")
+    original = Sample(id="q", input="What is one plus one?", choices=["one", "two"], target="B")
+    monkeypatch.setattr(module, "hf_dataset", lambda **kw: MemoryDataset([original]))
+    native = load_task(entry("arc_challenge"))
+    reworded = Sample(
+        id="q~r",
+        input="Add one to one.\n(A) two\n(B) one\nFinish with a line ANSWER: <letter>.",
+        choices=["two", "one"],
+        target="A",
+    )
+    questions = prepare_task(
+        task_with(native, dataset=MemoryDataset([reworded])),
+        presented=True,
+        source="private_reasoning",
+        workload_class="chat_qa",
+    )
+    [(prepared, _)] = restore_tasks(questions)
+    miner = ScriptedRouter(answer)
+    log = run(prepared, miner, tmp_path / "presented")
+    [scored] = log.samples
+    [score] = scored.scores.values()
+    assert score.value == grade
+    [message] = miner.calls[0].request.messages
+    assert message.text == reworded.input
+
+
 @pytest.mark.parametrize("benchmark_id", ["worldsense", "bbeh"])
 @pytest.mark.parametrize("correct", [True, False])
 def test_reasoning_task_metrics_and_grades_survive_preparation(

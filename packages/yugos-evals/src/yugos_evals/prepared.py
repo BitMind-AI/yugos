@@ -13,7 +13,19 @@ from inspect_ai._util.registry import registry_info, registry_lookup, registry_p
 from inspect_ai.agent import as_solver
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.scorer import accuracy, choice, exact, f1, match, mean, pattern, stderr
-from inspect_ai.solver import generate, multiple_choice, prompt_template, system_message
+from inspect_ai.solver import (
+    Generate,
+    TaskState,
+    generate,
+    multiple_choice,
+    prompt_template,
+    solver,
+    system_message,
+)
+from inspect_ai.solver._multiple_choice import (
+    parse_answers,
+    set_choices_based_on_generated_response,
+)
 
 from yugos.inspect_engine import freeze_task
 
@@ -89,6 +101,17 @@ _RESTORED_METRICS = {
     "inspect_evals/worldsense",
     "inspect_evals/bbeh",
 }
+# Scorers that read only the output and target, so the prompt can be presented as written.
+_PRESENTABLE = {
+    *(
+        f"inspect_evals/{name}"
+        for name in (
+            "mmlu_pro", "winogrande", "gpqa_diamond", "arc_challenge", "arc_easy",
+            "commonsense_qa", "hellaswag", "piqa", "race_h", "medqa", "musr",
+            "truthfulqa", "pubmedqa", "gsm8k", "math", "simpleqa", "simpleqa_verified",
+        )
+    ),
+}  # fmt: skip
 _CUSTOM_COMPONENTS = {
     "inspect_evals/bigcodebench",
     "inspect_evals/swe_bench",
@@ -110,11 +133,17 @@ def _require_nltk_data(directory: Path):
             raise ValueError("NLTK data must be staged in the execution image") from exc
 
 
-def prepare_task(task: Task, **options):
-    """Retain source arguments and any few-shot data while acquisition is permitted."""
+def prepare_task(task: Task, *, presented: bool = False, **options):
+    """Retain source arguments and any few-shot data while acquisition is permitted.
+
+    `presented` samples carry their complete prompt in `input`: execution sends it
+    as written, without the task's templates, and keeps the task's scorer.
+    """
     name = registry_info(task).name
     if name not in _MODULES:
         raise ValueError(f"task needs an installed prepared-data constructor: {name}")
+    if presented and name not in _PRESENTABLE:
+        raise ValueError(f"{name} cannot be presented as written")
     factory = registry_lookup("task", name)
     bound = inspect.signature(factory).bind_partial(**registry_params(task))
     bound.apply_defaults()
@@ -165,11 +194,12 @@ def prepare_task(task: Task, **options):
         # deterministic exact-match scorer on this task object too.
         module = importlib.import_module(_MODULES[name])
         task.scorer = [module.expression_exact_match()]
+    builder_args = {"task": name, "args": args, "fewshot_samples": fewshot_samples}
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
         origin={"task": name, "args": args},
-        builder_args={"task": name, "args": args, "fewshot_samples": fewshot_samples},
+        builder_args={**builder_args, "presented": True} if presented else builder_args,
         **options,
     )
 
@@ -187,10 +217,32 @@ def _mbpp_template(task: Task) -> str:
     return templates[0]
 
 
-def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] = ()) -> Task:
+@solver
+def presented_solver(multiple_correct: bool = False):
+    """Send the prompt as written; mark choices from its `ANSWER:` line as `multiple_choice` does."""
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        state = await generate(state)
+        if state.choices and (answers := parse_answers(state, multiple_correct)):
+            set_choices_based_on_generated_response(state, answers)
+        return state
+
+    return solve
+
+
+def build(
+    *,
+    options: dict,
+    task: str,
+    args: dict,
+    fewshot_samples: list[dict] = (),
+    presented: bool = False,
+) -> Task:
     """Build native solvers, agents, tools and scorers without calling source factories."""
     if task not in _MODULES:
         raise ValueError(f"unknown prepared task: {task}")
+    if presented and (task not in _PRESENTABLE or fewshot_samples or args.get("fewshot")):
+        raise ValueError(f"{task} cannot be presented as written")
     module = importlib.import_module(_MODULES[task])
     name = task.split("/")[1]
     solver, scorer, setup, metrics = generate(), None, None, None
@@ -432,6 +484,9 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         scorer = module.rubric_chat_scorer()
     elif name == "boxed_math":
         scorer = module.math_answer_scorer()
+    if presented:
+        multiple_correct = name == "truthfulqa" and args.get("target", "mc1") != "mc1"
+        solver = presented_solver(multiple_correct=multiple_correct)
     if metrics is not None:
         options = {**options, "metrics": metrics}
     return Task(**options, solver=solver, scorer=scorer, setup=setup)

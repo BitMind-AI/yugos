@@ -284,12 +284,53 @@ class SubmissionMeasurement(Record):
         return {row.category: row for row in self.categories}
 
 
+class WordingProbe(Record):
+    """Questions asked both as written and reworded; only the paired grade drop is judged.
+
+    Probe questions stay in their categories' assigned questions, so coverage is
+    checked as usual, but they leave net value and the quality floors.
+    """
+
+    # (original, reworded) question IDs.
+    pairs: tuple[tuple[Name, Name], ...] = Field(min_length=1)
+    # The difficulty panel's largest mean drop from original to reworded.
+    reference_drop: Annotated[Decimal, Field(ge=-1, le=1)]
+    tau: Quality = Decimal("0.05")
+    min_pairs: int = Field(default=150, ge=1, strict=True)
+    confidence: Annotated[Decimal, Field(gt=Decimal("0.5"), lt=1)] = Decimal("0.95")
+    enforce: bool = Field(default=False, strict=True)
+
+    @property
+    def question_ids(self) -> frozenset[str]:
+        return frozenset(qid for pair in self.pairs for qid in pair)
+
+
+class WordingResult(Record):
+    """A challenger's paired drop and whether it confidently exceeds the reference."""
+
+    pairs: int
+    drop: Decimal
+    reference_drop: Decimal
+    lower_bound: Decimal | None
+    failed: bool
+    enforced: bool
+
+
 class CompetitionPolicy(Record):
     """One competition: frozen categories and the net-value rule that compares routers."""
 
     version: Literal["yugos-overall-v2"] = COMPETITION_VERSION
     categories: tuple[CategoryRule, ...] = Field(min_length=1)
     net_value: NetValuePolicy = Field(default_factory=NetValuePolicy)
+    wording: WordingProbe | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_unset_wording(self, handler: SerializerFunctionWrapHandler):
+        # Policies without a wording probe keep their digests.
+        data = handler(self)
+        if self.wording is None:
+            data.pop("wording", None)
+        return data
 
     @model_validator(mode="after")
     def coherent_categories(self):
@@ -309,7 +350,34 @@ class CompetitionPolicy(Record):
             rule.anchor_time_per_question_ns is None for rule in self.categories
         ):
             raise ValueError("priced time requires an anchor time in every category")
+        if self.wording is not None:
+            probes = self.wording.question_ids
+            if len(probes) != 2 * len(self.wording.pairs) or not probes <= set(question_ids):
+                raise ValueError("wording pairs must be distinct assigned questions")
+            for rule in self.categories:
+                if probes & {*rule.hard_question_ids, *rule.private_question_ids}:
+                    raise ValueError("wording probes cannot be hard or private questions")
+                if set(rule.question_ids) <= probes:
+                    raise ValueError("every category needs questions outside the wording probe")
         return self
+
+    def scored(self) -> CompetitionPolicy:
+        """This policy without wording-probe questions, for net value and the floors."""
+        if self.wording is None:
+            return self
+        probes = self.wording.question_ids
+        return self.model_copy(
+            update={
+                "categories": tuple(
+                    rule.model_copy(
+                        update={
+                            "question_ids": tuple(q for q in rule.question_ids if q not in probes)
+                        }
+                    )
+                    for rule in self.categories
+                )
+            }
+        )
 
     def evidence_errors(self, run: SubmissionMeasurement) -> tuple[str, ...]:
         """Evidence problems that make a submission incomparable, before any gate."""
@@ -348,6 +416,38 @@ class ChallengeDecision(Record):
     lower_bound: Decimal | None = None
     min_net_value: Decimal | None = None
     reasons: tuple[str, ...]
+    wording: WordingResult | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_unset_wording(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.wording is None:
+            data.pop("wording", None)
+        return data
+
+
+def wording_result(policy: CompetitionPolicy, run: SubmissionMeasurement) -> WordingResult:
+    """Mean grade drop over the probe pairs, failed when its lower bound exceeds reference + tau."""
+    probe, config = policy.wording, policy.net_value
+    grades = {q: g for row in run.categories for q, g in row.grades.items()}
+    with localcontext() as context:
+        context.prec = PRECISION
+        drops = [grades[original] - grades[reworded] for original, reworded in probe.pairs]
+        bound = None
+        if len(drops) >= probe.min_pairs:
+            bound = lower_bound(
+                {"wording": (Decimal(1), drops)},
+                bootstrap=config.bootstrap,
+                confidence=probe.confidence,
+            )
+        return WordingResult(
+            pairs=len(drops),
+            drop=sum(drops, Decimal(0)) / len(drops),
+            reference_drop=probe.reference_drop,
+            lower_bound=bound,
+            failed=bound is not None and bound > probe.reference_drop + probe.tau,
+            enforced=probe.enforce,
+        )
 
 
 def decide_challenge(
@@ -371,6 +471,8 @@ def decide_challenge(
         return ChallengeDecision(**fields, eligible=False, promoted=False, reasons=errors)
     if incumbent is not None and policy.evidence_errors(incumbent):
         raise ValueError("incumbent evidence is not comparable under this frozen policy")
+    wording = wording_result(policy, challenger) if policy.wording else None
+    policy = policy.scored()
     config = policy.net_value
     marks = high_water_marks(policy, champions)
     ours = challenger.by_category()
@@ -397,6 +499,8 @@ def decide_challenge(
     failures = tuple(
         f"{name}: {failure}" for name, row in categories.items() for failure in row.gates.failures
     )
+    if wording is not None and wording.failed and wording.enforced:
+        failures += ("wording sensitivity exceeds the reference",)
     if incumbent is None:
         return ChallengeDecision(
             **fields,
@@ -404,6 +508,7 @@ def decide_challenge(
             promoted=not failures,
             categories=categories,
             reasons=failures or ("first eligible overall champion",),
+            wording=wording,
         )
     total = net_value(config.weights, {name: row.net_value for name, row in categories.items()})
     bound = None
@@ -425,6 +530,7 @@ def decide_challenge(
         lower_bound=bound,
         min_net_value=config.min_net_value,
         reasons=reasons,
+        wording=wording,
     )
 
 
