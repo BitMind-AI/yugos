@@ -11,7 +11,9 @@ from yugos_evals.prepared import prepare_task
 
 harness = importlib.import_module("yugos_evals.tasks.swe_harness")
 
-TEST_PATCH = "diff --git a/tests/test_a.py b/tests/test_a.py\n--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
+TEST_PATCH = (
+    "diff --git a/tests/test_a.py b/tests/test_a.py\n--- a/tests/test_a.py\n+++ b/tests/test_a.py\n"
+)
 
 
 def _row(**extra):

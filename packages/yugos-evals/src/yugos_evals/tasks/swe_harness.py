@@ -101,9 +101,7 @@ def _sample(row: dict, family: Family) -> Sample:
             "log_parser": row.get("log_parser") or _rebench_config(row).get("log_parser"),
             **recipe,
         },
-        sandbox=SandboxEnvironmentSpec(
-            "docker", ComposeConfig(services={"default": service})
-        ),
+        sandbox=SandboxEnvironmentSpec("docker", ComposeConfig(services={"default": service})),
     )
 
 
@@ -184,20 +182,31 @@ def resolved(metadata: dict, log: str) -> tuple[bool, dict]:
     return ok, {"passed": len(passed & (f2p | p2p)), "required": len(f2p | p2p)}
 
 
+async def _run(command: str, timeout: int = 600) -> str:
+    """Combined output of `command`, decoded leniently: test logs are not always UTF-8."""
+    try:
+        await sandbox().exec(
+            ["bash", "-c", f"{{ {command}\n}} > /tmp/yugos_out.log 2>&1"], timeout=timeout
+        )
+    except TimeoutError:
+        pass
+    output = await sandbox().read_file("/tmp/yugos_out.log", text=False)
+    return output.decode("utf-8", errors="replace")
+
+
 @scorer(metrics=[accuracy(), stderr()])
 def swe_harness_scorer():
     async def score(state: TaskState, target: Target) -> Score:
         metadata = state.metadata
         base = metadata["base_commit"]
-        diff = await sandbox().exec(
-            ["bash", "-c", f"cd /testbed && git add -A && git diff --cached --text {base}"]
-        )
+        diff = await _run(f"cd /testbed && git add -A 2>/dev/null; git diff --cached --text {base}")
         await sandbox().write_file("/tmp/yugos_eval.sh", eval_script(metadata))
-        result = await sandbox().exec(["bash", "/tmp/yugos_eval.sh"], timeout=1800)
-        ok, counts = resolved(metadata, result.stdout + "\n" + result.stderr)
+        # As SWE-bench's harness does, one interleaved stream: the scripts print their
+        # output markers through `set -x` (stderr) around the tests' stdout.
+        ok, counts = resolved(metadata, await _run("bash /tmp/yugos_eval.sh", timeout=1800))
         return Score(
             value=CORRECT if ok else INCORRECT,
-            answer=diff.stdout,
+            answer=diff,
             explanation=f"{counts['passed']} of {counts['required']} listed tests passed",
             metadata=counts,
         )
