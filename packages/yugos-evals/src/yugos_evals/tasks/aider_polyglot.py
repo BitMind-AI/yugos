@@ -80,10 +80,10 @@ def _gold_target(example: str, solution: list[str]) -> str:
     by_suffix = [s for s in solution if PurePosixPath(s).suffix == PurePosixPath(name).suffix]
     if len(by_name) == 1:
         return by_name[0]
+    if name.endswith(".java"):  # one public class per file, named after it
+        return f"src/main/java/{name}"
     if len(by_suffix) == 1 and not by_name:
         return by_suffix[0]
-    if name.endswith(".java"):
-        return f"src/main/java/{name}"
     raise ValueError(f"no solution file for reference file {example}")
 
 
