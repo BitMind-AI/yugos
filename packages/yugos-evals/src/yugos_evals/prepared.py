@@ -77,6 +77,7 @@ _MODULES = {
             "boxed_math",
             "reading",
             "cruxeval",
+            "aider_polyglot",
         )
     },
 }
@@ -424,6 +425,10 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         scorer = module.cruxeval_output_scorer()
     elif name == "code_tests":
         scorer = module.code_tests_scorer()
+    elif name == "aider_polyglot":
+        setup = module.polyglot_setup()
+        solver = module.polyglot_agent(args.get("tool_timeout", module.TOOL_TIMEOUT))
+        scorer = module.polyglot_scorer()
     elif name == "pairwise_judge":
         model = args.get("judge_model")
         setup = [module.judge_pin_guard(model)] if model else None

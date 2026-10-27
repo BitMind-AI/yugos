@@ -6,6 +6,7 @@ loads its public source when called, at preparation; frozen packs restore
 the selected samples without calling it again.
 """
 
+from .aider_polyglot import aider_polyglot
 from .boxed_math import boxed_math
 from .code_tests import code_tests
 from .cruxeval import cruxeval
@@ -15,6 +16,7 @@ from .reading import reading
 from .rubric_chat import rubric_chat
 
 __all__ = [
+    "aider_polyglot",
     "boxed_math",
     "code_tests",
     "cruxeval",
