@@ -9,6 +9,7 @@ the selected samples without calling it again.
 from .boxed_math import boxed_math
 from .code_tests import code_tests
 from .cruxeval import cruxeval
+from .intercode_bash import intercode_bash
 from .math_answer import math_answer
 from .pairwise_judge import pairwise_judge
 from .reading import reading
@@ -18,6 +19,7 @@ __all__ = [
     "boxed_math",
     "code_tests",
     "cruxeval",
+    "intercode_bash",
     "math_answer",
     "pairwise_judge",
     "rubric_chat",
