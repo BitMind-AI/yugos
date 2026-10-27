@@ -151,16 +151,16 @@ def test_categories_without_hard_questions_still_decide():
 
 
 @pytest.mark.parametrize(
-    "reworded,min_pairs,enforce,failed,promoted",
+    "original,reworded,min_pairs,enforce,failed,promoted",
     [
-        ("0", 20, True, True, False),  # wording-keyed router is gated
-        ("0", 20, False, True, True),  # report-only: probe losses leave net value alone
-        ("1", 20, True, False, True),
-        ("0", 100, True, False, True),  # too few pairs to judge
+        ("1", "0", 20, True, True, False),  # wording-keyed router is gated
+        ("1", "0", 20, False, True, False),  # report-only, but reworded losses still count
+        ("0", "1", 20, True, False, True),  # original copies only feed the gate
+        ("1", "0", 100, True, False, False),  # too few pairs to judge
     ],
 )
-def test_wording_probe_gates_the_paired_drop_but_not_net_value(
-    reworded, min_pairs, enforce, failed, promoted
+def test_wording_probe_gates_the_paired_drop_and_scores_only_reworded_copies(
+    original, reworded, min_pairs, enforce, failed, promoted
 ):
     pairs = tuple((f"chat_qa-{i}", f"chat_qa-{i + 40}") for i in range(10, 50))
     probe = competition.WordingProbe(
@@ -168,14 +168,15 @@ def test_wording_probe_gates_the_paired_drop_but_not_net_value(
     )
     frozen = policy().model_copy(update={"wording": probe})
     frozen = CompetitionPolicy.model_validate(frozen.model_dump(mode="json"))
-    grades = {qid: Decimal(1) for qid in ids("chat_qa")} | {
-        reworded_id: Decimal(reworded) for _, reworded_id in pairs
-    }
+    grades = {qid: Decimal(1) for qid in ids("chat_qa")}
+    for original_id, reworded_id in pairs:
+        grades |= {original_id: Decimal(original), reworded_id: Decimal(reworded)}
     challenger = submission("cheap", cost="8", overrides={"chat_qa": {"grades": grades}})
     king = submission(overrides={"chat_qa": {"quality": "1"}})
     decision = decide_challenge(frozen, challenger, (king,))
     assert (decision.wording.failed, decision.promoted) == (failed, promoted)
-    assert decision.categories["chat_qa"].gates.quality == 1
+    gated = "wording sensitivity exceeds the reference" in decision.reasons
+    assert gated == (failed and enforce)
     assert "wording" not in policy().model_dump(mode="json")
 
 

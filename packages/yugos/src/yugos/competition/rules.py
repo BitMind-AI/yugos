@@ -285,10 +285,11 @@ class SubmissionMeasurement(Record):
 
 
 class WordingProbe(Record):
-    """Questions asked both as written and reworded; only the paired grade drop is judged.
+    """Questions asked both as written and reworded, judged on the paired grade drop.
 
-    Probe questions stay in their categories' assigned questions, so coverage is
-    checked as usual, but they leave net value and the quality floors.
+    Reworded copies are scored like any other question, so a router cannot spend
+    on them for free. The original copies only feed this gate: they stay in
+    coverage checks but leave net value and the quality floors.
     """
 
     # (original, reworded) question IDs.
@@ -303,6 +304,10 @@ class WordingProbe(Record):
     @property
     def question_ids(self) -> frozenset[str]:
         return frozenset(qid for pair in self.pairs for qid in pair)
+
+    @property
+    def original_ids(self) -> frozenset[str]:
+        return frozenset(original for original, _ in self.pairs)
 
 
 class WordingResult(Record):
@@ -354,18 +359,19 @@ class CompetitionPolicy(Record):
             probes = self.wording.question_ids
             if len(probes) != 2 * len(self.wording.pairs) or not probes <= set(question_ids):
                 raise ValueError("wording pairs must be distinct assigned questions")
+            originals = self.wording.original_ids
             for rule in self.categories:
-                if probes & {*rule.hard_question_ids, *rule.private_question_ids}:
-                    raise ValueError("wording probes cannot be hard or private questions")
-                if set(rule.question_ids) <= probes:
-                    raise ValueError("every category needs questions outside the wording probe")
+                if originals & {*rule.hard_question_ids, *rule.private_question_ids}:
+                    raise ValueError("original wording probes cannot be hard or private questions")
+                if set(rule.question_ids) <= originals:
+                    raise ValueError("every category needs questions outside the original probes")
         return self
 
     def scored(self) -> CompetitionPolicy:
-        """This policy without wording-probe questions, for net value and the floors."""
+        """This policy without the original probe copies, for net value and the floors."""
         if self.wording is None:
             return self
-        probes = self.wording.question_ids
+        probes = self.wording.original_ids
         return self.model_copy(
             update={
                 "categories": tuple(
