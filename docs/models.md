@@ -19,6 +19,19 @@ prices. The response includes `sha256` for the card you just read.
 `card.roles` lists grader and simulator models. Those are operator calls.
 They are not extra models your router should declare.
 
+## Output allowance and spend
+
+Benchmark and provider limits bound generation, including reasoning where the
+provider counts it as output. Planning estimates do not impose a smaller token
+limit. Hosted runs charge actual usage and release unused call reservations.
+
+Budget-aware admission waits when other active calls temporarily hold the funds
+it needs. If the remaining balance cannot fund the normal maximum after those
+calls settle, the host can reduce the next response's output allowance to fit.
+This requires a provider contract that bounds billed usage by that allowance;
+otherwise the full reviewed bound remains required. Existing benchmark limits
+still apply, and an unfundable call is refused before dispatch.
+
 ## What you may declare
 
 `models.json` is a JSON array. One object per distinct choice:

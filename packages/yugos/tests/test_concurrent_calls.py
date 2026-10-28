@@ -410,3 +410,165 @@ def test_zero_quote_unresolved_reserves_one_cent():
 
 def test_subcent_quote_unresolved_reserves_one_cent():
     _unresolved_on_quote(0.009)
+
+
+@pytest.mark.parametrize("same_question", [False, True])
+def test_budget_fitting_waits_for_settlement_before_reducing_output(same_question):
+    entered, release, waiting = Event(), Event(), Event()
+    requests, fitted = [], []
+
+    def quote(request):
+        if requests:
+            waiting.set()
+        return 0.8
+
+    def complete(request):
+        requests.append(request)
+        if len(requests) == 1:
+            entered.set()
+            assert release.wait(5)
+        return ModelResponse(text="answer", cost_usd=0.1, latency_s=0)
+
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=quote, complete=complete),
+        CallLimits(max_cost_usd=1, max_question_cost_usd=1), lambda _: None,
+        fit_request=lambda request, allowance: fitted.append(allowance),
+    )
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(meter.execute, ACTION, "q", deadline=time.monotonic() + 10)
+        assert entered.wait(5)
+        second = pool.submit(meter.execute, ACTION, "q" if same_question else "q2",
+                             deadline=time.monotonic() + 10)
+        try:
+            assert waiting.wait(5)
+            assert not second.done() and not fitted and not meter.budget.stopped.is_set()
+        finally:
+            release.set()
+        assert first.result().text == second.result().text == "answer"
+    assert not fitted and all(r.max_output_tokens is None for r in requests)
+    assert meter.cost_usd == pytest.approx(0.2) and not meter.budget.reservations
+
+
+def test_budget_fitting_uses_remaining_spend_and_retains_the_funded_request():
+    requests, intents = [], []
+
+    def complete(request):
+        requests.append(request)
+        return ModelResponse(text="answer", cost_usd=0.6 if len(requests) == 1 else 0.1, latency_s=0)
+
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=lambda r: (r.max_output_tokens or 80) / 100, complete=complete),
+        CallLimits(max_cost_usd=1, max_question_cost_usd=1), lambda _: None,
+        fit_request=lambda request, available: request.model_copy(
+            update={"max_output_tokens": int(round(available * 100))}),
+        prepare_call=lambda intent: intents.append(intent) or intent.request,
+    )
+    meter.execute(ACTION, "q", deadline=time.monotonic() + 10)
+    meter.execute(ACTION, "q2", deadline=time.monotonic() + 10)
+    assert requests[1].max_output_tokens == 40 and intents[1].quote_usd == 0.4
+    assert meter.calls[1].request == requests[1] and meter.cost_usd == pytest.approx(0.7)
+    assert not meter.budget.reservations
+
+
+def test_waiting_for_a_reservation_obeys_deadlines_without_stopping_other_calls():
+    entered, release = Event(), Event()
+
+    def complete(request):
+        entered.set()
+        assert release.wait(5)
+        return ModelResponse(text="answer", cost_usd=0.1, latency_s=0)
+
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=lambda _: 0.8, complete=complete),
+        CallLimits(max_cost_usd=1, max_question_cost_usd=1), lambda _: None,
+        fit_request=lambda *_: pytest.fail("active holds must settle first"),
+    )
+    with ThreadPoolExecutor(1) as pool:
+        first = pool.submit(meter.execute, ACTION, "q", deadline=time.monotonic() + 10)
+        try:
+            assert entered.wait(5)
+            with pytest.raises(QuestionLimitExceeded, match="time limit"):
+                meter.execute(ACTION, "q2", deadline=time.monotonic() + 0.05)
+            assert not meter.budget.stopped.is_set()
+        finally:
+            release.set()
+        assert first.result().text == "answer"
+
+
+def test_unresolved_holds_stay_funded_without_waiting_for_a_finished_call():
+    attempts = []
+
+    def complete(request):
+        attempts.append(request)
+        if len(attempts) == 1:
+            return ModelResponse(text="unknown", spend=OpenReservation(reservation_usd="0.8"), latency_s=0)
+        return ModelResponse(text="answer", cost_usd=0.1, latency_s=0)
+
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=lambda r: (r.max_output_tokens or 80) / 100, complete=complete),
+        CallLimits(max_cost_usd=1, max_question_cost_usd=1), lambda _: None,
+        fit_request=lambda request, available: request.model_copy(
+            update={"max_output_tokens": int(round(available * 100))}),
+    )
+    with pytest.raises(UnresolvedSpend):
+        meter.execute(ACTION, "q", deadline=time.monotonic() + 10)
+    meter.execute(ACTION, "q2", deadline=time.monotonic() + 10)
+    assert attempts[1].max_output_tokens == 20
+    assert list(meter.budget.reservations.values()) == [("q", 0.8)]
+    assert meter.cost_usd == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("defect", ["input", "model", "output"])
+def test_budget_fitter_cannot_change_the_request_or_raise_a_native_cap(defect):
+    def fit(request, available):
+        if defect == "input":
+            request.input.messages[0].content = "changed"
+            return request
+        if defect == "model":
+            return request.model_copy(update={"model": ModelChoice(provider_id="fixture", model_id="other")})
+        return request.model_copy(update={"max_output_tokens": 11})
+
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=lambda _: 0.8, complete=lambda _: pytest.fail("unfunded dispatch")),
+        CallLimits(max_cost_usd=0.5, max_question_cost_usd=0.5), lambda _: None,
+        fit_request=fit,
+    )
+    with pytest.raises(CallError, match="cost bound is unavailable"):
+        meter.execute(ACTION, "q", max_output_tokens=10, deadline=time.monotonic() + 10)
+    assert not meter.calls and not meter.budget.reservations
+    assert ACTION.input.messages[0].content == "question"
+
+
+def test_stopping_the_budget_wakes_waiters_without_another_provider_call():
+    entered, release, waiting = Event(), Event(), Event()
+    requests = []
+
+    def quote(request):
+        if requests:
+            waiting.set()
+        return 0.8
+
+    def complete(request):
+        requests.append(request)
+        entered.set()
+        assert release.wait(5)
+        return ModelResponse(text="answer", cost_usd=0.1, latency_s=0)
+
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=quote, complete=complete),
+        CallLimits(max_cost_usd=1, max_question_cost_usd=1), lambda _: None,
+        fit_request=lambda *_: pytest.fail("stopped call cannot be fitted"),
+    )
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(meter.execute, ACTION, "q", deadline=time.monotonic() + 10)
+        assert entered.wait(5)
+        second = pool.submit(meter.execute, ACTION, "q2", deadline=time.monotonic() + 10)
+        try:
+            assert waiting.wait(5)
+            meter.budget.stop()
+            with pytest.raises(CallError, match="stopped"):
+                second.result(timeout=1)
+        finally:
+            release.set()
+        assert first.result().text == "answer"
+    assert len(requests) == 1 and meter.cost_usd == 0.1 and not meter.budget.reservations

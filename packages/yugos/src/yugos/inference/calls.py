@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from threading import Event, RLock
+from threading import Condition, Event, RLock
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -124,6 +124,7 @@ class CallBudget:
     def __init__(self, limits: CallLimits):
         self.limits = limits
         self.lock = RLock()
+        self.changed = Condition(self.lock)
         self.stopped = Event()
         self.calls: list[CallRecord] = []
         self.reservations: dict[str, tuple[str, float]] = {}
@@ -131,6 +132,8 @@ class CallBudget:
     def stop(self) -> None:
         """Prevent new admissions while already admitted calls retain their evidence."""
         self.stopped.set()
+        with self.changed:
+            self.changed.notify_all()
 
 
 @dataclass(frozen=True)
@@ -149,7 +152,12 @@ class CallIntent:
 
 
 class MeteredCalls:
-    """Thread-safe call admission and settlement with caller-owned durable records."""
+    """Thread-safe call admission and settlement with caller-owned durable records.
+
+    An optional host `fit_request` can narrow output to the available dollars.
+    Admission waits for active holds first, then re-quotes the fitted request;
+    its full upper bound must fit before any intent or provider call is made.
+    """
 
     def __init__(
         self,
@@ -160,12 +168,65 @@ class MeteredCalls:
         *,
         budget: CallBudget | None = None,
         prepare_call: Callable[[CallIntent], ModelRequest] | None = None,
+        fit_request: Callable[[ModelRequest, float], ModelRequest | None] | None = None,
     ):
         self.run_id, self.client, self.limits, self.record = run_id, client, limits, record
         self.budget = budget or CallBudget(limits)
         self.calls: list[CallRecord] = []
         self._steps: dict[str, int] = {}
         self.prepare_call = prepare_call
+        self.fit_request = fit_request
+
+    def _quote(self, request):
+        quote = float(self.client.quote(request))
+        if not math.isfinite(quote) or quote < 0:
+            raise ValueError("invalid quote")
+        return float(OpenReservation(reservation_usd=Decimal(str(quote))).reservation_usd)
+
+    def _fit_budget(self, request, quote, question_id, deadline, clock):
+        """Wait for active holds before asking the host to narrow an unaffordable response."""
+        budget, limits = self.budget, self.budget.limits
+        while True:
+            if budget.stopped.is_set():
+                raise CallError("evaluation stopped; no further calls can be admitted")
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise QuestionLimitExceeded("question time limit reached")
+            question_calls = [c for c in budget.calls if c.question_id == question_id]
+            available = limits.max_cost_usd - committed_usd(budget.calls) - math.fsum(
+                cost for _, cost in budget.reservations.values()
+            )
+            question_available = limits.max_question_cost_usd - committed_usd(question_calls) - math.fsum(
+                cost for qid, cost in budget.reservations.values() if qid == question_id
+            )
+            if quote <= min(available, question_available) + 1e-12:
+                return request, quote
+            completed = {c.request.call_id for c in budget.calls}
+            active = [
+                qid for call_id, (qid, _) in budget.reservations.items()
+                if call_id not in completed
+            ]
+            if (quote > available + 1e-12 and active) or (
+                quote > question_available + 1e-12 and question_id in active
+            ):
+                budget.changed.wait(timeout=min(remaining, 1.0))
+                continue
+            allowance = min(available, question_available)
+            if allowance <= 0:
+                return request, quote
+            original = request.model_dump(exclude={"max_output_tokens"})
+            fitted = self.fit_request(request.model_copy(deep=True), allowance)
+            if fitted is None:
+                return request, quote
+            fitted = ModelRequest.model_validate(fitted.model_dump())
+            if (
+                fitted.model_dump(exclude={"max_output_tokens"}) != original
+                or fitted.max_output_tokens is None
+                or (request.max_output_tokens is not None
+                    and fitted.max_output_tokens > request.max_output_tokens)
+            ):
+                raise ValueError("budget fitting may only narrow the output allowance")
+            return fitted, self._quote(fitted)
 
     @property
     def cost_usd(self) -> float:
@@ -258,10 +319,15 @@ class MeteredCalls:
             if len(question_calls) + len(pending) >= limits.max_calls_per_question:
                 raise QuestionLimitExceeded("question call limit reached")
             try:
-                quote = float(self.client.quote(request))
-                if not math.isfinite(quote) or quote < 0:
-                    raise ValueError("invalid quote")
-                quote = float(OpenReservation(reservation_usd=Decimal(str(quote))).reservation_usd)
+                quote = self._quote(request)
+                if self.fit_request is not None:
+                    request, quote = self._fit_budget(request, quote, question_id, deadline, clock)
+                    question_calls = [c for c in budget.calls if c.question_id == question_id]
+                    pending = [cost for qid, cost in budget.reservations.values() if qid == question_id]
+                    if len(question_calls) + len(pending) >= limits.max_calls_per_question:
+                        raise QuestionLimitExceeded("question call limit reached")
+            except (CallError, QuestionLimitExceeded):
+                raise
             except RequestRejected:
                 raise
             except Exception as exc:
@@ -344,6 +410,7 @@ class MeteredCalls:
             except Exception as exc:
                 budget.stop()
                 raise CallError("call record could not be persisted", pending=call) from exc
+            budget.changed.notify_all()
             if response.spend.status == "known" and float(response.spend.usd) > quote + 1e-12:
                 budget.stop()
                 raise CallError("provider cost exceeded its declared upper bound", pending=call)
