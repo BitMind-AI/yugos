@@ -110,12 +110,15 @@ A question is hard when the calibration panel's solve share is at most the
 policy threshold. The default threshold is 0: no panel model solved it.
 Questions with the same solve share stay on the same side of the line.
 
-### Wording check at the v2.2 launch
+### Wording check
 
 A private wording check runs before the scored pack. It compares the router's
-model choices on questions, hidden rewordings and identical repeats. It launches
-in **report-only mode**: its findings do not reject a submission or change
-promotion. These probes are outside the 2,375 scored questions. Their provider
+model choices on questions, hidden rewordings and identical repeats. The check
+is **enforced for newly dispatched evaluations**: a failed check stops the run
+before the scored pack. Jobs already dispatched in report-only mode keep that
+setting; existing results and champion history are retained.
+
+These probes are outside the 2,375 scored questions. Their provider
 calls consume the run's budget, while their grades, spend and time are excluded
 from the competition measurement. Existing evidence, quality and time gates
 continue to apply.
