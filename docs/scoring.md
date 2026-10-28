@@ -118,6 +118,12 @@ is **enforced for newly dispatched evaluations**: a failed check stops the run
 before the scored pack. Jobs already dispatched in report-only mode keep that
 setting; existing results and champion history are retained.
 
+The check discourages overfitting to a question's exact wording or presentation.
+Equivalent questions should lead to broadly consistent model choices. A run is
+rejected when the check finds, with **95% confidence**, that rewording increases
+the model-choice change rate by **more than 20 percentage points**, after
+allowing for any randomness in the router.
+
 These probes are outside the 2,375 scored questions. Their provider
 calls consume the run's budget, while their grades, spend and time are excluded
 from the competition measurement. Existing evidence, quality and time gates
