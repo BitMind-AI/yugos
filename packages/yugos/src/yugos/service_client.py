@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit
@@ -60,10 +61,21 @@ class ServiceError(RuntimeError):
     def __init__(self, path, status, raw):
         self.path = path
         self.status = status
+        self.detail = {}
         try:
             data = json.loads(raw)
             detail = data.get("detail", {})
             self.code = detail.get("code") if isinstance(detail, dict) else None
+            if isinstance(detail, dict):
+                self.detail = detail
+            # Recognize the upload service's response from before structured quota errors.
+            elif (
+                status == 429 and path in {"/submissions", "/presigned"} and isinstance(detail, str)
+            ):
+                limit = re.fullmatch(r"rate limit: ([1-9][0-9]*) new zips per day", detail)
+                if limit:
+                    self.code = "submission_limit_reached"
+                    self.detail = {"submissions_max": int(limit[1])}
             # bt.http_auth.StaleRequest, returned as the 401 detail by the service.
             if isinstance(detail, str) and detail.startswith("nonce is older than the "):
                 self.code = "request_signature_expired"

@@ -195,7 +195,20 @@ def submission_error(error):
     title = "Submission needs attention"
     message = str(error)
     if isinstance(error, ServiceError):
-        if error.code == "credits_locked":
+        if error.code == "submission_limit_reached":
+            title = "Submission limit reached"
+            limit = error.detail.get("submissions_max")
+            quota = (
+                f"the limit of {limit} new ZIPs per hotkey"
+                if type(limit) is int and limit > 0
+                else "your hotkey's limit for new ZIPs"
+            )
+            message = (
+                f"You have reached {quota} in a rolling 24-hour window.\n"
+                "Wait for an earlier submission to leave that window, then retry. "
+                "You can still resume the same ZIP."
+            )
+        elif error.code == "credits_locked":
             title = "Funding is held"
             message = (
                 "An earlier evaluation still holds funds for this hotkey.\n"
