@@ -126,14 +126,28 @@ class CallBudget:
         self.lock = RLock()
         self.changed = Condition(self.lock)
         self.stopped = Event()
+        self._stop_reason: tuple[str, str, CallRecord | None] | None = None
         self.calls: list[CallRecord] = []
         self.reservations: dict[str, tuple[str, float]] = {}
 
-    def stop(self) -> None:
+    def stop(self, reason: CallError | None = None) -> None:
         """Prevent new admissions while already admitted calls retain their evidence."""
-        self.stopped.set()
         with self.changed:
+            if not self.stopped.is_set():
+                self._stop_reason = (
+                    (str(reason), reason.owner, reason.pending) if reason is not None else None
+                )
+                self.stopped.set()
             self.changed.notify_all()
+
+    def _raise_if_stopped(self) -> None:
+        """Give each waiter its own exception without losing the original owner."""
+        if self.stopped.is_set():
+            reason = self._stop_reason
+            if reason is None:
+                raise CallError("evaluation stopped; no further calls can be admitted")
+            detail, owner, pending = reason
+            raise CallError(detail, owner=owner, pending=pending)
 
 
 @dataclass(frozen=True)
@@ -187,8 +201,7 @@ class MeteredCalls:
         """Wait for active holds before asking the host to narrow an unaffordable response."""
         budget, limits = self.budget, self.budget.limits
         while True:
-            if budget.stopped.is_set():
-                raise CallError("evaluation stopped; no further calls can be admitted")
+            budget._raise_if_stopped()
             remaining = deadline - clock()
             if remaining <= 0:
                 raise QuestionLimitExceeded("question time limit reached")
@@ -312,8 +325,7 @@ class MeteredCalls:
             timeout_s=min(remaining, self.limits.call_timeout_s),
         )
         with budget.lock:
-            if budget.stopped.is_set():
-                raise CallError("evaluation stopped; no further calls can be admitted")
+            budget._raise_if_stopped()
             question_calls = [c for c in budget.calls if c.question_id == question_id]
             pending = [cost for qid, cost in budget.reservations.values() if qid == question_id]
             if len(question_calls) + len(pending) >= limits.max_calls_per_question:
@@ -336,8 +348,9 @@ class MeteredCalls:
             committed = committed_usd(budget.calls)
             reserved = math.fsum(cost for _, cost in budget.reservations.values())
             if quote > limits.max_cost_usd - committed - reserved + 1e-12:
-                budget.stop()
-                raise CallError("evaluation budget cannot fund the next call", owner="budget")
+                failure = CallError("evaluation budget cannot fund the next call", owner="budget")
+                budget.stop(failure)
+                raise failure
             question_cost = committed_usd(question_calls)
             if quote > limits.max_question_cost_usd - question_cost - math.fsum(pending) + 1e-12:
                 raise QuestionLimitExceeded("question budget cannot fund the next call")
