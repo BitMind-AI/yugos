@@ -8,6 +8,12 @@ API keys and are not competition results.
 The live competition pack is prepared separately. This package builds public
 development packs only.
 
+Math-Verify comparisons run in disposable processes with a 30-second wall
+deadline and, on Linux, a 1 GiB address-space limit. A timeout, resource failure
+or lost worker leaves the answer unscored as a grader error; it never becomes
+an incorrect answer. Reference screening uses the same limits. Successful
+comparisons retain the existing extraction and strict verification rules.
+
 ## Install
 
 ```sh
