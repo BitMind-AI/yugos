@@ -85,6 +85,46 @@ def _ambiguous_numeric_answer(gold: str, text: str) -> bool:
     return bool(lines and len(_PLAIN_NUMBER.findall(lines[-1])) != 1)
 
 
+def _integer_counterexample(gold, response) -> bool:
+    """Refute a formal identity before SymPy expands a huge finite sum.
+
+    Undefined functions have no supplied definition in the frozen comparison.
+    Any identity with a numeric integer must hold when those functions are zero.
+    An exact, different integer under that interpretation proves a mismatch;
+    matching or unresolved interpretations prove nothing and use normal verify.
+    """
+    from sympy import Integer, Sum
+    from sympy.core.function import AppliedUndef
+
+    if not isinstance(gold, Integer) or not hasattr(response, "atoms"):
+        return False
+    sums, functions = response.atoms(Sum), response.atoms(AppliedUndef)
+    zero = Integer(0)
+    if (
+        not sums
+        or not functions
+        or any(
+            getattr(zero, "is_" + name, None) is not value
+            for function in functions
+            for name, value in getattr(function.func, "_kwargs", {}).items()
+        )
+    ):
+        return False
+    if any(
+        len(limit) != 3 or not isinstance(limit[1], Integer) or not isinstance(limit[2], Integer)
+        for total in sums
+        for limit in total.limits
+    ):
+        return False
+    try:
+        witness = response.replace(
+            lambda node: isinstance(node, AppliedUndef), lambda node: zero
+        ).doit()
+        return isinstance(witness, Integer) and witness != gold
+    except Exception:  # The ordinary verifier still owns every unresolved case.
+        return False
+
+
 def grade_math(gold: str, text: str) -> Outcome:
     """Compare a response's final answer with the reference; parser failures never escape."""
     expected = (gold or "").strip()
@@ -116,6 +156,10 @@ def grade_math(gold: str, text: str) -> Outcome:
         )
         if not parsed_response:
             return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "unparseable"})
+        if len(parsed_gold) == len(parsed_response) == 1 and _integer_counterexample(
+            parsed_gold[0], parsed_response[0]
+        ):
+            return Outcome(GradeCode.INCORRECT)
         matched = bool(verify(parsed_gold, parsed_response, strict=True, timeout_seconds=0))
     except Exception as exc:  # noqa: BLE001 - one response must not abort a scoring run.
         return Outcome(
