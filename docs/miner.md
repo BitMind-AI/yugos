@@ -225,6 +225,10 @@ The receipt holds the upload session and no wallet secrets. Keep it private:
 it also stores the link to your funding page. Rerun the same command with the
 same ZIP to resume after a crash. A completed attempt is not evaluated again.
 
+The hosted service limits new ZIPs per hotkey in a rolling 24-hour window.
+If you see `Submission limit reached`, wait for an earlier submission to leave
+that window, then retry. Resuming the same ZIP does not use another slot.
+
 ```sh
 yugos status ./submission.receipt.json --wallet miner --hotkey default
 ```
