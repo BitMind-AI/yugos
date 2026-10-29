@@ -122,6 +122,25 @@ def test_calls_map_to_ycores_inspect_model_and_generate_config(
     }
 
 
+@pytest.mark.parametrize(
+    "provider, api_format, model",
+    [("anthropic", "anthropic", "claude"), ("openrouter", "openai", "anthropic/claude")],
+)
+def test_prompt_caching_is_opt_in(provider, api_format, model):
+    def config(**kwargs):
+        return inspect_generation(
+            provider,
+            api_format,
+            choice(provider, model),
+            sampled(),
+            max_output_tokens=10,
+            **kwargs,
+        ).config
+
+    assert config().cache_prompt is False
+    assert config(cache_prompt=True).cache_prompt is True
+
+
 def test_unrequested_settings_stay_unset_and_invalid_requests_fail_before_dispatch():
     spec = inspect_generation(
         "openai", "openai", choice("openai"), ModelInput.from_text("hi"), max_output_tokens=None
