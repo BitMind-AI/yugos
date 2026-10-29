@@ -226,6 +226,105 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
         args={"target": "mc1", "shuffle": False},
         notes="multiple_choice config; mc1 is the single true answer.",
     ),
+    # Reasoning benchmarks verified against inspect_evals==0.22.0.
+    _upstream("bbeh_mini", "chat_qa", notes="BIG-Bench Extra Hard Mini: reduced subset of BBEH for faster evaluation."),
+    _upstream("lingoly", "chat_qa", notes="LingOly: linguistics olympiad problems requiring deep language reasoning."),
+    _upstream("lingoly_too", "chat_qa", notes="LingOly-Too: extended linguistics olympiad problems."),
+    _upstream(
+        "mmmu_multiple_choice",
+        "chat_qa",
+        notes="MMMU multiple-choice: multi-discipline multimodal understanding; text-only router path.",
+    ),
+    _upstream(
+        "mmmu_open",
+        "chat_qa",
+        notes="MMMU open-ended: multi-discipline multimodal open questions; text-only router path.",
+    ),
+    _upstream("niah", "chat_qa", notes="NIAH (Needle In A Haystack): long-context retrieval benchmark."),
+    _upstream(
+        "novelty_bench",
+        "chat_qa",
+        notes="NoveltyBench: evaluating creative and novel reasoning.",
+    ),
+    _upstream("vimgolf_single_turn", "chat_qa", notes="VimGolf single-turn: text-editing benchmark using vim-style operations."),
+    _upstream("infinite_bench_code_debug", "chat_qa", notes="InfiniteBench code_debug: long-context (100k+) code debugging task."),
+    _upstream("infinite_bench_code_run", "chat_qa", notes="InfiniteBench code_run: long-context (100k+) code execution prediction task."),
+    _upstream("infinite_bench_kv_retrieval", "chat_qa", notes="InfiniteBench kv_retrieval: long-context (100k+) key-value retrieval task."),
+    _upstream("infinite_bench_longbook_choice_eng", "chat_qa", notes="InfiniteBench longbook_choice_eng: long-context (100k+) book multiple-choice task."),
+    _upstream("infinite_bench_longdialogue_qa_eng", "chat_qa", notes="InfiniteBench longdialogue_qa_eng: long-context (100k+) dialogue QA task."),
+    _upstream("infinite_bench_math_calc", "chat_qa", notes="InfiniteBench math_calc: long-context (100k+) math calculation task."),
+    _upstream("infinite_bench_math_find", "chat_qa", notes="InfiniteBench math_find: long-context (100k+) math number retrieval task."),
+    _upstream("infinite_bench_number_string", "chat_qa", notes="InfiniteBench number_string: long-context (100k+) number string retrieval task."),
+    _upstream("infinite_bench_passkey", "chat_qa", notes="InfiniteBench passkey: long-context (100k+) passkey retrieval task."),
+    # Knowledge benchmarks verified against inspect_evals==0.22.0.
+    # AGIE academic-exam suite (nine tasks, shared cot/fewshot/fewshot_seed params).
+    _upstream("agie_aqua_rat", "chat_qa", notes="AGIE AQuA-RAT: algebraic word-problem reasoning from the AGIE exam suite."),
+    _upstream("agie_logiqa_en", "chat_qa", notes="AGIE LogiQA-EN: logical reasoning QA from the AGIE exam suite."),
+    _upstream("agie_lsat_ar", "chat_qa", notes="AGIE LSAT-AR: analytical reasoning from the AGIE LSAT subset."),
+    _upstream("agie_lsat_lr", "chat_qa", notes="AGIE LSAT-LR: logical reasoning from the AGIE LSAT subset."),
+    _upstream("agie_lsat_rc", "chat_qa", notes="AGIE LSAT-RC: reading comprehension from the AGIE LSAT subset."),
+    _upstream("agie_math", "chat_qa", notes="AGIE MATH: competition math problems from the AGIE exam suite."),
+    _upstream("agie_sat_en", "chat_qa", notes="AGIE SAT-EN: SAT English questions from the AGIE exam suite."),
+    _upstream(
+        "agie_sat_en_without_passage",
+        "chat_qa",
+        notes="AGIE SAT-EN (no passage): SAT English questions without the reading passage.",
+    ),
+    _upstream("agie_sat_math", "chat_qa", notes="AGIE SAT-Math: SAT math questions from the AGIE exam suite."),
+    # Domain knowledge
+    _upstream("air_bench", "chat_qa", notes="AIR-Bench: instruction-following safety and capability benchmark."),
+    _upstream("chembench", "chat_qa", notes="ChemBench: chemistry knowledge and reasoning benchmark."),
+    _upstream(
+        "frontierscience",
+        "chat_qa",
+        notes=(
+            "FrontierScience: cutting-edge scientific knowledge QA. "
+            "Upstream uses a grader_model; defaults to the Inspect provider default."
+        ),
+    ),
+    _upstream(
+        "healthbench",
+        "chat_qa",
+        notes=(
+            "HealthBench: medical AI quality and safety benchmark. "
+            "Upstream uses a judge_model; defaults to the Inspect provider default."
+        ),
+    ),
+    _upstream("healthbench_hard", "chat_qa", notes="HealthBench Hard: harder subset of HealthBench."),
+    _upstream("healthbench_consensus", "chat_qa", notes="HealthBench Consensus: consensus-labelled subset of HealthBench."),
+    _upstream("healthbench_meta_eval", "chat_qa", notes="HealthBench Meta-Eval: meta-evaluation of HealthBench judges."),
+    _upstream(
+        "livebench",
+        "chat_qa",
+        notes=(
+            "LiveBench: all categories (reasoning, coding, math, language, data analysis, "
+            "instruction following). Pin the release date. "
+            "See also livebench_reasoning for the reasoning-only entry."
+        ),
+    ),
+    _upstream("mmlu_0_shot", "chat_qa", notes="MMLU 0-shot: MMLU evaluated without few-shot examples."),
+    _upstream("mmlu_5_shot", "chat_qa", notes="MMLU 5-shot: MMLU evaluated with five-shot examples."),
+    _upstream("macbench", "chat_qa", notes="MACBench: multi-agent collaboration knowledge benchmark."),
+    _upstream("onet_m6", "chat_qa", notes="O*NET M6: occupational knowledge benchmark from the O*NET database."),
+    _upstream("pre_flight", "chat_qa", notes="Pre-flight: aviation knowledge and safety QA benchmark."),
+    _upstream("sosbench", "chat_qa", notes="SOSBench: safety-of-science benchmark covering dual-use knowledge domains."),
+    _upstream("sciknoweval", "chat_qa", notes="SciKnowEval: scientific knowledge evaluation across multiple research domains."),
+    _upstream(
+        "uccb",
+        "chat_qa",
+        notes=(
+            "UCCB: user-centric chatbot benchmark. "
+            "Upstream uses a scorer_model; defaults to the Inspect provider default."
+        ),
+    ),
+    _upstream(
+        "xstest",
+        "chat_qa",
+        notes=(
+            "XSTest: cross-safety evaluation of safe vs. unsafe prompts. "
+            "Upstream uses a scorer_model; defaults to the Inspect provider default."
+        ),
+    ),
     # Math / code
     _upstream("gsm8k", "math_code", args={"fewshot": 0}),
     _upstream("aime2024", "math_code"),
@@ -261,6 +360,9 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
             "The model equivalence scorer is not constructed."
         ),
     ),
+    # Mathematics benchmarks verified against inspect_evals==0.22.0.
+    _upstream("mgsm", "math_code", notes="MGSM: multilingual grade school math benchmark across 11 languages."),
+    _upstream("mathvista", "math_code", notes="MathVista: mathematical reasoning in visual contexts; text-only router path."),
     # Agentic
     _upstream(
         "agent_bench_os",
@@ -376,6 +478,504 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
             "instead of upstream's v2.0 judge (gpt-4.1); its verdicts differ from "
             "upstream's (52% exact agreement, favouring the candidate)."
         ),
+    ),
+    # Coding benchmarks verified against inspect_evals==0.22.0.
+    _upstream(
+        "apps",
+        "math_code",
+        notes=(
+            "APPS: introductory-to-competition programming problems with unit tests. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "core_bench",
+        "math_code",
+        notes=(
+            "CoreBench: computational reproducibility benchmark evaluating agents' ability "
+            f"to reproduce scientific results. {_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "class_eval",
+        "math_code",
+        notes=(
+            "ClassEval: class-level code generation benchmark with method dependencies "
+            f"and unit tests. {_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "compute_eval",
+        "math_code",
+        notes=(
+            "ComputeEval: benchmark for evaluating compute-intensive code generation "
+            f"tasks. {_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "frontier_cs",
+        "math_code",
+        notes=(
+            "FrontierCS: frontier computer science research problems. "
+            "See also frontier_cs_algorithmic and frontier_cs_research variants."
+        ),
+    ),
+    _upstream(
+        "frontier_cs_algorithmic",
+        "math_code",
+        notes="FrontierCS algorithmic variant: subset focused on algorithmic problems.",
+    ),
+    _upstream(
+        "frontier_cs_research",
+        "math_code",
+        notes="FrontierCS research variant: subset focused on research-level problems.",
+    ),
+    _upstream(
+        "ifevalcode",
+        "math_code",
+        notes=(
+            "IFEvalCode: instruction-following evaluation for code generation tasks. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "kernelbench",
+        "math_code",
+        notes=(
+            "KernelBench: GPU kernel optimization benchmark testing CUDA/Triton "
+            f"code generation. {_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "livecodebench_pro",
+        "math_code",
+        notes=(
+            "LiveCodeBench Pro: upstream's pro variant with harder coding problems. "
+            "Distinct from the native yugos_evals livecodebench entry. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "mle_bench",
+        "agentic",
+        notes=(
+            "MLE-Bench: Kaggle competition benchmark requiring end-to-end ML engineering. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "mle_bench_full",
+        "agentic",
+        notes=(
+            "MLE-Bench Full: complete set of Kaggle competition tasks. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "mle_bench_lite",
+        "agentic",
+        notes=(
+            "MLE-Bench Lite: reduced subset of Kaggle competition tasks for faster evaluation. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "mlrc_bench",
+        "agentic",
+        notes=(
+            "MLRC-Bench: ML reproducibility challenge benchmark requiring paper "
+            f"reproduction. {_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "paperbench",
+        "agentic",
+        notes=(
+            "PaperBench: evaluating agents on reproducing ML research papers end-to-end. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "swe_lancer",
+        "agentic",
+        notes=(
+            "SWE-Lancer: real-world freelance software engineering tasks from Upwork. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "scicode",
+        "math_code",
+        notes=(
+            "SciCode: scientific code generation benchmark across multiple research "
+            f"disciplines. {_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "usaco",
+        "math_code",
+        notes=(
+            "USACO: USA Computing Olympiad competitive programming problems. "
+            f"{_SANDBOX}"
+        ),
+    ),
+    _upstream(
+        "scbench",
+        "agentic",
+        notes=(
+            "scBench: agentic coding benchmark requiring Docker sandbox and "
+            f"inspect-swe agent. {_SANDBOX}"
+        ),
+    ),
+    # Scheming / safety benchmarks verified against inspect_evals==0.22.0.
+    _upstream(
+        "agentic_misalignment",
+        "agentic",
+        notes=(
+            "Agentic Misalignment: evaluates goal-directed misaligned behaviour in agentic settings. "
+            "Upstream uses a grader_model; defaults to the Inspect provider default."
+        ),
+    ),
+    # GDM scheming probes — end-to-end scenarios (sp01–sp12, no sp06/sp11).
+    _upstream("gdm_sp01_e2e", "agentic", notes="GDM scheming probe SP01 end-to-end scenario."),
+    _upstream("gdm_sp02_e2e", "agentic", notes="GDM scheming probe SP02 end-to-end scenario."),
+    _upstream("gdm_sp03_e2e", "agentic", notes="GDM scheming probe SP03 end-to-end scenario."),
+    _upstream("gdm_sp04_e2e", "agentic", notes="GDM scheming probe SP04 end-to-end scenario."),
+    _upstream("gdm_sp05_e2e", "agentic", notes="GDM scheming probe SP05 end-to-end scenario."),
+    _upstream("gdm_sp07_e2e", "agentic", notes="GDM scheming probe SP07 end-to-end scenario."),
+    _upstream("gdm_sp08_e2e", "agentic", notes="GDM scheming probe SP08 end-to-end scenario."),
+    _upstream("gdm_sp09_e2e", "agentic", notes="GDM scheming probe SP09 end-to-end scenario."),
+    _upstream("gdm_sp10_e2e", "agentic", notes="GDM scheming probe SP10 end-to-end scenario."),
+    _upstream("gdm_sp12_e2e", "agentic", notes="GDM scheming probe SP12 end-to-end scenario."),
+    # GDM self-reasoning tasks (need a sandbox).
+    _upstream(
+        "gdm_self_reasoning_approved_directories",
+        "agentic",
+        notes=f"GDM self-reasoning: approved-directories scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_calculator_improvement",
+        "agentic",
+        notes=f"GDM self-reasoning: calculator-improvement scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_context_length_mod_instrumental_only",
+        "agentic",
+        notes=f"GDM self-reasoning: context-length modification (instrumental only). {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_context_length_mod_irreversibility_only",
+        "agentic",
+        notes=f"GDM self-reasoning: context-length modification (irreversibility only). {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_database_tool",
+        "agentic",
+        notes=f"GDM self-reasoning: database-tool scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_latency_calculator",
+        "agentic",
+        notes=f"GDM self-reasoning: latency-calculator scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_max_messages_calculator",
+        "agentic",
+        notes=f"GDM self-reasoning: max-messages-calculator scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_max_tokens",
+        "agentic",
+        notes=f"GDM self-reasoning: max-tokens scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_oversight_frequency",
+        "agentic",
+        notes=f"GDM self-reasoning: oversight-frequency scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_read_logs",
+        "agentic",
+        notes=f"GDM self-reasoning: read-logs scenario. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_self_reasoning_turn_off_filters",
+        "agentic",
+        notes=f"GDM self-reasoning: turn-off-filters scenario. {_SANDBOX}",
+    ),
+    # GDM deceptive / covert scheming tasks (rater_model_company selects the LLM rater).
+    _upstream(
+        "gdm_classifier_evasion",
+        "agentic",
+        notes="GDM classifier evasion: tests whether a model evades a content classifier. Upstream uses rater_model_company.",
+    ),
+    _upstream(
+        "gdm_cover_your_tracks",
+        "agentic",
+        notes="GDM cover-your-tracks: tests whether a model covers evidence of its actions. Upstream uses rater_model_company.",
+    ),
+    _upstream(
+        "gdm_oversight_pattern",
+        "agentic",
+        notes="GDM oversight pattern: tests whether a model behaves differently under oversight. Upstream uses rater_model_company.",
+    ),
+    _upstream(
+        "gdm_strategic_rule_breaking",
+        "agentic",
+        notes="GDM strategic rule-breaking: tests whether a model strategically violates rules. Upstream uses rater_model_company.",
+    ),
+    _upstream(
+        "instrumentaleval",
+        "agentic",
+        notes=(
+            "InstrumentalEval: evaluates instrumental reasoning and goal-directed behaviour. "
+            "Upstream uses a grader_model; defaults to the Inspect provider default."
+        ),
+    ),
+    # SAD (Situational Awareness Dataset) — multiple-choice knowledge tasks.
+    _upstream("sad_stages_full", "chat_qa", notes="SAD stages (full): situational-awareness multiple-choice across all stages."),
+    _upstream("sad_stages_oversight", "chat_qa", notes="SAD stages (oversight): situational-awareness MC focused on oversight stages."),
+    _upstream("sad_influence", "chat_qa", notes="SAD influence: situational-awareness MC on a model's capacity to influence outcomes."),
+    _upstream("sad_facts_llms", "chat_qa", notes="SAD facts (LLMs): situational-awareness MC on factual knowledge about LLMs."),
+    _upstream("sad_facts_human_defaults", "chat_qa", notes="SAD facts (human defaults): situational-awareness MC on human-default knowledge."),
+    # Cybersecurity benchmarks verified against inspect_evals==0.22.0.
+    # CTI REALM — agentic cyber-threat-intelligence tasks.
+    _upstream("cti_realm_25", "agentic", notes="CTI REALM 25: cyber threat intelligence reasoning with 25 challenges."),
+    _upstream("cti_realm_50", "agentic", notes="CTI REALM 50: cyber threat intelligence reasoning with 50 challenges."),
+    _upstream("cti_realm_25_minimal", "agentic", notes="CTI REALM 25 minimal: CTI REALM 25 without tool scaffolding."),
+    _upstream("cti_realm_25_seeded", "agentic", notes="CTI REALM 25 seeded: CTI REALM 25 with a fixed random seed."),
+    # CTF / exploitation tasks (need sandboxes).
+    _upstream(
+        "cve_bench",
+        "agentic",
+        notes=f"CVE-Bench: real-world CVE exploitation challenges in isolated environments. {_SANDBOX}",
+    ),
+    _upstream(
+        "threecb",
+        "agentic",
+        notes=f"3CB: three capture-the-flag challenge benchmarks requiring a sandbox. {_SANDBOX}",
+    ),
+    _upstream(
+        "cybench",
+        "agentic",
+        notes=f"CyberBench: CTF security challenges across multiple categories. {_SANDBOX}",
+    ),
+    _upstream(
+        "cybergym",
+        "agentic",
+        notes=f"CyberGym: offensive security gym benchmark with isolated environments. {_SANDBOX}",
+    ),
+    _upstream(
+        "gdm_in_house_ctf",
+        "agentic",
+        notes="GDM in-house CTF: DeepMind's internal capture-the-flag security challenges.",
+    ),
+    _upstream(
+        "gdm_intercode_ctf",
+        "agentic",
+        notes=f"GDM InterCode CTF: interactive code-based CTF challenges. {_SANDBOX}",
+    ),
+    # CYSE attack/defence scenarios.
+    _upstream(
+        "cyse3_visual_prompt_injection",
+        "agentic",
+        notes="CYSE3 visual prompt injection: vision-based prompt-injection attack scenarios. Upstream uses judge_llm.",
+    ),
+    _upstream(
+        "cyse4_multiturn_phishing",
+        "agentic",
+        notes="CYSE4 multi-turn phishing: simulated phishing conversations. Upstream uses victim_llm and judge_llm.",
+    ),
+    _upstream(
+        "cyse4_multilingual_prompt_injection",
+        "agentic",
+        notes="CYSE4 multilingual prompt injection: cross-language prompt-injection scenarios. Upstream uses judge_llm.",
+    ),
+    _upstream(
+        "cyse2_interpreter_abuse",
+        "agentic",
+        notes="CYSE2 interpreter abuse: evaluates LLM resistance to interpreter-abuse attacks. Upstream uses judge_llm.",
+    ),
+    _upstream(
+        "cyse2_prompt_injection",
+        "agentic",
+        notes="CYSE2 prompt injection: evaluates LLM resistance to prompt-injection attacks. Upstream uses judge_llm.",
+    ),
+    _upstream(
+        "cyse2_vulnerability_exploit",
+        "agentic",
+        notes="CYSE2 vulnerability exploit: practical vulnerability exploitation scenarios.",
+    ),
+    # CYSE4 knowledge / static-analysis tasks.
+    _upstream("cyse4_mitre", "chat_qa", notes="CYSE4 MITRE ATT&CK: knowledge QA over the MITRE ATT&CK framework. Upstream uses expansion_llm and judge_llm."),
+    _upstream("cyse4_mitre_frr", "chat_qa", notes="CYSE4 MITRE FRR: false-rejection-rate variant of the CYSE4 MITRE task."),
+    _upstream("cyse4_instruct", "chat_qa", notes="CYSE4 instruct: cybersecurity instruction-following evaluation."),
+    _upstream("cyse4_autocomplete", "chat_qa", notes="CYSE4 autocomplete: cybersecurity code/command autocomplete benchmark."),
+    _upstream("cyse4_malware_analysis", "chat_qa", notes="CYSE4 malware analysis: static malware analysis knowledge benchmark."),
+    _upstream("cyse4_threat_intelligence", "chat_qa", notes="CYSE4 threat intelligence: cyber threat intelligence knowledge evaluation."),
+    # CyberMetric MC knowledge benchmark (four size variants).
+    _upstream("cybermetric_80", "chat_qa", notes="CyberMetric-80: 80-question cybersecurity knowledge MC benchmark."),
+    _upstream("cybermetric_500", "chat_qa", notes="CyberMetric-500: 500-question cybersecurity knowledge MC benchmark."),
+    _upstream("cybermetric_2000", "chat_qa", notes="CyberMetric-2000: 2000-question cybersecurity knowledge MC benchmark."),
+    _upstream("cybermetric_10000", "chat_qa", notes="CyberMetric-10000: 10000-question cybersecurity knowledge MC benchmark."),
+    # SevenLLM bilingual cybersecurity QA.
+    _upstream("sevenllm_mcq_zh", "chat_qa", notes="SevenLLM MCQ (Chinese): cybersecurity multiple-choice QA in Chinese."),
+    _upstream("sevenllm_mcq_en", "chat_qa", notes="SevenLLM MCQ (English): cybersecurity multiple-choice QA in English."),
+    _upstream("sevenllm_qa_zh", "chat_qa", notes="SevenLLM QA (Chinese): cybersecurity open QA in Chinese."),
+    _upstream("sevenllm_qa_en", "chat_qa", notes="SevenLLM QA (English): cybersecurity open QA in English."),
+    # SecQA security knowledge benchmark (v1/v2, 0-shot and 5-shot).
+    _upstream("sec_qa_v1", "chat_qa", notes="SecQA v1: 0-shot security knowledge benchmark."),
+    _upstream("sec_qa_v1_5_shot", "chat_qa", notes="SecQA v1 5-shot: 5-shot security knowledge benchmark."),
+    _upstream("sec_qa_v2", "chat_qa", notes="SecQA v2: 0-shot security knowledge benchmark (v2 dataset)."),
+    _upstream("sec_qa_v2_5_shot", "chat_qa", notes="SecQA v2 5-shot: 5-shot security knowledge benchmark (v2 dataset)."),
+    # Assistants / agentic-task benchmarks verified against inspect_evals==0.22.0.
+    # AssistantBench — four variants (closed-book + web-augmented, 0-shot and 1-shot).
+    _upstream("assistant_bench_closed_book_zero_shot", "chat_qa", notes="AssistantBench closed-book 0-shot: complex real-world QA without retrieval."),
+    _upstream("assistant_bench_closed_book_one_shot", "chat_qa", notes="AssistantBench closed-book 1-shot: complex real-world QA without retrieval, one-shot."),
+    _upstream(
+        "assistant_bench_web_search_zero_shot",
+        "agentic",
+        notes="AssistantBench web-search 0-shot: complex QA augmented with web search. Upstream uses web_search_model.",
+    ),
+    _upstream(
+        "assistant_bench_web_search_one_shot",
+        "agentic",
+        notes="AssistantBench web-search 1-shot: complex QA with web search, one-shot. Upstream uses web_search_model.",
+    ),
+    _upstream(
+        "assistant_bench_web_browser",
+        "agentic",
+        notes="AssistantBench web browser: complex QA requiring live browser interaction. Upstream uses web_search_model.",
+    ),
+    # Web / GUI agentic benchmarks.
+    _upstream(
+        "browse_comp",
+        "agentic",
+        notes=f"BrowseComp: web-browsing composition tasks requiring multi-step retrieval. {_SANDBOX} Upstream uses scorer_model.",
+    ),
+    _upstream("gaia", "agentic", notes=f"GAIA: general AI assistant benchmark with tool use. {_SANDBOX}"),
+    _upstream("gaia_level1", "agentic", notes="GAIA level 1: easiest subset of the GAIA benchmark."),
+    _upstream("gaia_level2", "agentic", notes="GAIA level 2: medium-difficulty subset of the GAIA benchmark."),
+    _upstream("gaia_level3", "agentic", notes="GAIA level 3: hardest subset of the GAIA benchmark."),
+    _upstream("gdpval", "agentic", notes="GDPVal: general digital-task performance validation benchmark."),
+    _upstream("mind2web", "agentic", notes="Mind2Web: web navigation benchmark evaluating agent task completion on real websites."),
+    _upstream(
+        "osworld",
+        "agentic",
+        notes=f"OSWorld: computer-use benchmark requiring GUI interaction in a live OS environment. {_SANDBOX}",
+    ),
+    _upstream(
+        "osworld_small",
+        "agentic",
+        notes=f"OSWorld small: reduced-size subset of OSWorld for faster evaluation. {_SANDBOX}",
+    ),
+    _upstream(
+        "sycophancy",
+        "chat_qa",
+        notes="Sycophancy: evaluates tendency to give socially desirable over truthful answers. Upstream uses scorer_model.",
+    ),
+    _upstream(
+        "theagentcompany",
+        "agentic",
+        notes="TheAgentCompany: agentic workplace tasks requiring multi-step tool use in a simulated company environment.",
+    ),
+    # Safeguards benchmarks verified against inspect_evals==0.22.0.
+    # Multi-turn / agentic safety tasks.
+    _upstream(
+        "agentdojo",
+        "agentic",
+        notes="AgentDojo: prompt-injection attacks against tool-using agents across realistic tasks.",
+    ),
+    _upstream(
+        "agentharm",
+        "agentic",
+        notes="AgentHarm: evaluates agent harmfulness across a range of harmful behaviors. Upstream uses refusal_judge and semantic_judge.",
+    ),
+    _upstream(
+        "agentharm_benign",
+        "agentic",
+        notes="AgentHarm benign: benign-behavior baseline paired with AgentHarm. Upstream uses refusal_judge and semantic_judge.",
+    ),
+    _upstream("agent_threat_bench_memory_poison", "agentic", notes="AgentThreatBench memory-poisoning: evaluates resistance to memory-poisoning attacks."),
+    _upstream("agent_threat_bench_autonomy_hijack", "agentic", notes="AgentThreatBench autonomy-hijack: evaluates resistance to autonomy-hijacking attacks."),
+    _upstream("agent_threat_bench_data_exfil", "agentic", notes="AgentThreatBench data-exfiltration: evaluates resistance to data-exfiltration attacks."),
+    _upstream("ipi_coding_agent", "agentic", notes="IPI coding agent: indirect prompt injection against a coding agent."),
+    _upstream(
+        "ape_eval",
+        "agentic",
+        notes="APE-Eval: adversarial persuasion evaluation testing resistance to multi-turn influence.",
+    ),
+    _upstream("make_me_pay", "agentic", notes="MakeMePay: multi-turn manipulation evaluation testing whether an agent can be socially engineered."),
+    _upstream("makemesay", "agentic", notes="MakeMeSay: multi-turn jailbreak evaluation testing whether a model can be made to produce target phrases."),
+    _upstream("mind2web_sc", "agentic", notes="Mind2Web-SC: safety-constrained web navigation benchmark."),
+    _upstream("tac", "agentic", notes="TAC: tool-augmented conversation safety benchmark."),
+    _upstream("tac_welfare", "agentic", notes="TAC Welfare: welfare-focused variant of the TAC tool-augmented conversation benchmark."),
+    _upstream("b3", "agentic", notes="B3: agentic benchmark evaluating behaviour across threat levels and task types."),
+    # Single-turn / knowledge safety tasks.
+    _upstream(
+        "anima",
+        "chat_qa",
+        notes="ANIMA: evaluates model accuracy on natural-language QA across languages. Upstream uses grader_models.",
+    ),
+    _upstream(
+        "abstention_bench",
+        "chat_qa",
+        notes="AbstentionBench: evaluates appropriate refusal on unanswerable or harmful questions. Upstream uses grader_model.",
+    ),
+    _upstream(
+        "fortress_adversarial",
+        "chat_qa",
+        notes="Fortress adversarial: adversarial safety robustness evaluation. Upstream uses grader_models.",
+    ),
+    _upstream(
+        "fortress_benign",
+        "chat_qa",
+        notes="Fortress benign: benign-baseline safety evaluation paired with Fortress adversarial. Upstream uses grader_model.",
+    ),
+    # LAB-Bench — scientific laboratory knowledge (eight sub-tasks).
+    _upstream("lab_bench_litqa", "chat_qa", notes="LAB-Bench LitQA: scientific literature question answering."),
+    _upstream("lab_bench_suppqa", "chat_qa", notes="LAB-Bench SuppQA: supplementary-material QA from scientific papers."),
+    _upstream("lab_bench_figqa", "chat_qa", notes="LAB-Bench FigQA: figure-based question answering in scientific papers."),
+    _upstream("lab_bench_tableqa", "chat_qa", notes="LAB-Bench TableQA: table-based QA in scientific papers."),
+    _upstream("lab_bench_dbqa", "chat_qa", notes="LAB-Bench DBQA: database-driven scientific QA."),
+    _upstream("lab_bench_protocolqa", "chat_qa", notes="LAB-Bench ProtocolQA: laboratory protocol question answering."),
+    _upstream("lab_bench_seqqa", "chat_qa", notes="LAB-Bench SeqQA: biological sequence question answering."),
+    _upstream("lab_bench_cloning_scenarios", "chat_qa", notes="LAB-Bench cloning scenarios: molecular cloning design scenarios."),
+    _upstream(
+        "mask",
+        "chat_qa",
+        notes="MASK: measures honesty by comparing stated beliefs to revealed behaviour. Upstream uses binary and numeric judge models.",
+    ),
+    _upstream(
+        "moru",
+        "chat_qa",
+        notes="MORU: multilingual open-ended response understanding benchmark. Upstream uses grader_models.",
+    ),
+    _upstream("persistbench_cross_domain", "chat_qa", notes="PersistBench cross-domain: cross-domain persistence and instruction-following evaluation."),
+    _upstream("persistbench_sycophancy", "chat_qa", notes="PersistBench sycophancy: sycophancy persistence under repeated pressure."),
+    _upstream("persistbench_beneficial_memory", "chat_qa", notes="PersistBench beneficial memory: evaluates retention of beneficial information across turns."),
+    _upstream("stereoset", "chat_qa", notes="StereoSet: intrasentence and intersentence stereotyping evaluation."),
+    _upstream(
+        "strong_reject",
+        "chat_qa",
+        notes="StrongREJECT: jailbreak-resistance evaluation using a judge LLM. Upstream uses judge_llm.",
+    ),
+    _upstream("coconot", "chat_qa", notes="CoCoNot: complex compositional instruction-following and refusal benchmark."),
+    # WMDP — weapons of mass destruction proxy (three domains).
+    _upstream("wmdp_bio", "chat_qa", notes="WMDP biology: biosecurity knowledge proxy benchmark."),
+    _upstream("wmdp_chem", "chat_qa", notes="WMDP chemistry: chemical-weapons knowledge proxy benchmark."),
+    _upstream("wmdp_cyber", "chat_qa", notes="WMDP cyber: cybersecurity uplift proxy benchmark."),
+    # Bias benchmarks verified against inspect_evals==0.22.0.
+    _upstream("bbq", "chat_qa", notes="BBQ: bias benchmark for question answering across nine social categories."),
+    _upstream("bold", "chat_qa", notes="BOLD: bias in open-ended language generation across demographic groups."),
+    # Personality benchmarks verified against inspect_evals==0.22.0.
+    _upstream("personality_bfi", "chat_qa", task="personality_BFI", notes="Personality BFI: Big Five Inventory personality trait elicitation benchmark."),
+    _upstream("personality_trait", "chat_qa", task="personality_TRAIT", notes="Personality TRAIT: trait-based personality evaluation benchmark."),
+    # Writing benchmarks verified against inspect_evals==0.22.0.
+    _upstream(
+        "writingbench",
+        "chat_qa",
+        notes="WritingBench: comprehensive writing quality evaluation across multiple domains. Upstream uses judge_model.",
     ),
     # Planned: these need multi-service environments or prepared Docker infrastructure.
     _planned(
