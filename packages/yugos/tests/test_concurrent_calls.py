@@ -201,6 +201,57 @@ def test_four_calls_overlap_and_each_bill_is_retained():
     assert not meter.budget.reservations
 
 
+def test_a_budget_stop_keeps_its_reason_for_waiting_and_later_admissions(monkeypatch):
+    limits = CallLimits(max_cost_usd=0.1, max_question_cost_usd=1)
+    budget = CallBudget(limits)
+    entered_wait = Event()
+    real_wait = budget.changed.wait
+
+    def wait(*args, **kwargs):
+        entered_wait.set()
+        return real_wait(*args, **kwargs)
+
+    monkeypatch.setattr(budget.changed, "wait", wait)
+    budget.reservations["active"] = ("inflight", 0.1)
+    dispatched = []
+    client = SimpleNamespace(quote=lambda _: 0.2, complete=lambda r: dispatched.append(r))
+    waiter = MeteredCalls(
+        "r", client, limits, lambda _: None, budget=budget, fit_request=lambda *_: None
+    )
+    stopper = MeteredCalls("r", client, limits, lambda _: None, budget=budget)
+    with ThreadPoolExecutor(1) as pool:
+        waiting = pool.submit(waiter.execute, ACTION, "waiting", deadline=time.monotonic() + 5)
+        assert entered_wait.wait(timeout=2)
+        with pytest.raises(CallError, match="budget cannot fund") as original:
+            stopper.execute(ACTION, "unaffordable", deadline=time.monotonic() + 5)
+        with pytest.raises(CallError, match="budget cannot fund") as awakened:
+            waiting.result(timeout=2)
+    # Host shutdown may call stop again after receiving the original error.
+    budget.stop()
+    with pytest.raises(CallError, match="budget cannot fund") as later:
+        waiter.execute(ACTION, "later", deadline=time.monotonic() + 5)
+    assert {e.value.owner for e in (original, awakened, later)} == {"budget"}
+    assert len({id(e.value) for e in (original, awakened, later)}) == 3
+    assert not dispatched and not waiter.calls and not stopper.calls
+    assert budget.reservations == {"active": ("inflight", 0.1)}
+
+
+def test_an_unexplained_shutdown_cannot_be_relabelled_by_a_later_budget_error():
+    limits = CallLimits(max_cost_usd=1, max_question_cost_usd=1)
+    budget = CallBudget(limits)
+    budget.stop()
+    budget.stop(CallError("evaluation budget cannot fund the next call", owner="budget"))
+    dispatched = []
+    meter = MeteredCalls(
+        "r", SimpleNamespace(quote=lambda _: 0.1, complete=dispatched.append),
+        limits, lambda _: None, budget=budget,
+    )
+    with pytest.raises(CallError, match="evaluation stopped") as caught:
+        meter.execute(ACTION, "q", deadline=time.monotonic() + 5)
+    assert caught.value.owner == "infrastructure"
+    assert not dispatched and not meter.calls and not budget.reservations
+
+
 def test_unknown_cost_keeps_its_reservation_while_later_questions_continue():
     records = []
     attempts = 0
@@ -303,8 +354,9 @@ def test_shared_budget_includes_inflight_quotes_and_retains_late_bills(failure):
     assert candidate.cost_usd == (0 if failure == "missing_usage" else 0.02)
     assert not judge.calls
     assert bool(budget.reservations) == (failure != "none")
-    with pytest.raises(CallError, match="stopped"):
+    with pytest.raises(CallError, match="budget cannot fund") as stopped:
         candidate.execute(ACTION, "third", deadline=time.monotonic() + 10)
+    assert stopped.value.owner == "budget"
 
 
 def test_restored_history_counts_against_remaining_budget_and_question_calls():
