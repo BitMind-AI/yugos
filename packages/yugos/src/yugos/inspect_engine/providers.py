@@ -78,12 +78,15 @@ def inspect_generation(
     input: ModelInput,
     *,
     max_output_tokens: int | None,
+    cache_prompt: bool = False,
 ) -> InspectGeneration:
     """The Inspect model name, adapter arguments and `GenerateConfig` for one call.
 
     `api_format` is the provider's configured format; `request_api_format`
     selects Responses where it applies. Anthropic requires an explicit output
     maximum (callers pass the model's reviewed limit when the request has none).
+    `cache_prompt` lets Inspect place Anthropic prompt-cache breakpoints (direct
+    and through OpenRouter); providers that cache automatically are unaffected.
     """
     if model.provider_id != provider_id:
         raise ValueError("model belongs to a different provider")
@@ -99,7 +102,7 @@ def inspect_generation(
             if input.config.max_tokens is not None
             else max_output_tokens
         )
-    requested.update(max_retries=0, cache_prompt=False)
+    requested.update(max_retries=0, cache_prompt=cache_prompt)
     requested.setdefault("reasoning_summary", "none")
     if model.effort is not None:
         requested["reasoning_effort"] = model.effort
@@ -110,9 +113,12 @@ def inspect_generation(
             f"google/{model_id}", wire, config, {"streaming": False, "use_adc": False}
         )
     if wire == "anthropic":
-        return InspectGeneration(
-            f"anthropic/{model_id}", wire, config, {"streaming": False, "max_retries": 0}
-        )
+        args: dict[str, Any] = {"streaming": False, "max_retries": 0}
+        if cache_prompt:
+            # Otherwise Inspect may switch a sample to the one-hour TTL after a
+            # pause, from in-memory state a replay of the call cannot rebuild.
+            args["cache_ttl"] = "5m"
+        return InspectGeneration(f"anthropic/{model_id}", wire, config, args)
     if provider_id == "openai" or wire == RESPONSES_API_FORMAT:
         return InspectGeneration(
             f"openai/{model_id}",

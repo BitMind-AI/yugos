@@ -122,6 +122,29 @@ def test_calls_map_to_ycores_inspect_model_and_generate_config(
     }
 
 
+@pytest.mark.parametrize(
+    "provider, api_format, model",
+    [("anthropic", "anthropic", "claude"), ("openrouter", "openai", "anthropic/claude")],
+)
+def test_prompt_caching_is_opt_in(provider, api_format, model):
+    def spec(**kwargs):
+        return inspect_generation(
+            provider,
+            api_format,
+            choice(provider, model),
+            sampled(),
+            max_output_tokens=10,
+            **kwargs,
+        )
+
+    off, on = spec(), spec(cache_prompt=True)
+    assert off.config.cache_prompt is False and on.config.cache_prompt is True
+    assert "cache_ttl" not in off.model_args
+    # A sample-dependent TTL would change the wire request between a call and
+    # its replay; OpenRouter's markers carry no TTL.
+    assert on.model_args.get("cache_ttl") == ("5m" if provider == "anthropic" else None)
+
+
 def test_unrequested_settings_stay_unset_and_invalid_requests_fail_before_dispatch():
     spec = inspect_generation(
         "openai", "openai", choice("openai"), ModelInput.from_text("hi"), max_output_tokens=None
