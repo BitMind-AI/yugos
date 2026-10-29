@@ -10,10 +10,10 @@ grade vocabulary and are the only fields public logs keep.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from inspect_ai.scorer import Score
-from inspect_ai.solver import TaskState
+if TYPE_CHECKING:
+    from inspect_ai.solver import TaskState
 
 from yugos.evaluation.grades import GradeCode
 
@@ -54,6 +54,8 @@ class Outcome:
 
 def to_score(outcome: Outcome, *, answer: str | None = None, failure: str = "scoring_failed"):
     """The outcome as an Inspect score; unsettled outcomes are unscored with a reason."""
+    from inspect_ai.scorer import Score
+
     metadata = {"code": outcome.code.value, "status": outcome.status, **outcome.details}
     if not outcome.settled:
         return Score.unscored(reason=failure, answer=answer, metadata=metadata)
