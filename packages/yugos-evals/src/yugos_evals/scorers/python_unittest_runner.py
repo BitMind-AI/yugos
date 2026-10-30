@@ -190,10 +190,22 @@ class SupervisorConnection(Connection):
             if name_box[0] != consts.LABEL_VALUE:
                 raise CandidateError("invalid fixture attribute")
             name = name_box[1]
+            # NumPy probes these absent protocols before iterating ordinary
+            # containers. Let RPyC return AttributeError without opening private
+            # attributes on fixtures that could actually implement a protocol.
+            absent_array_protocol = (
+                type(obj) in {list, dict, set, frozenset}
+                and type(name) is str
+                and name in {"__array__", "__array_interface__", "__array_struct__"}
+            )
             if (
                 type(name) is not str
                 or name in self.fixtures._BLOCKED
-                or (name.startswith("_") and name not in self.fixtures._SPECIAL)
+                or (
+                    name.startswith("_")
+                    and name not in self.fixtures._SPECIAL
+                    and not absent_array_protocol
+                )
             ):
                 raise CandidateError("fixture attribute is not available")
 

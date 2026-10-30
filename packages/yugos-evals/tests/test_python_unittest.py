@@ -109,7 +109,9 @@ class TestCases(unittest.TestCase):
     assert report["cause"] == ("all_pass" if correct else "test_failure")
 
 
-@pytest.mark.parametrize("attribute", ["__globals__", "__code__", "__closure__", "__dict__"])
+@pytest.mark.parametrize(
+    "attribute", ["__globals__", "__code__", "__closure__", "__dict__", "__array_interface__"]
+)
 def test_function_metadata_does_not_grant_access_to_trusted_execution_state(attribute):
     candidate = f"def task_func(function): return function._request('get', {attribute!r})"
     tests = """
@@ -122,6 +124,29 @@ class TestCases(unittest.TestCase):
 """
     report = _run(candidate, tests=tests, timeout_s=10)
     assert report["passed"] is False and report["cause"] == "test_failure"
+
+
+def test_rsa_transport_rejects_unbounded_malformed_and_other_key_types():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    spec = importlib.util.spec_from_file_location("rsa_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pytest.raises(module.UnsupportedResult):
+        module._materialize(("rsa_private_key", "not bytes"))
+    with pytest.raises(module.UnsupportedResult):
+        module._materialize(("rsa_private_key", b"x" * (module.MAX_RSA_BYTES + 1)))
+    with pytest.raises(ValueError):
+        module._materialize(("rsa_private_key", b"not a DER key"))
+    other_key = ec.generate_private_key(ec.SECP256R1())
+    payload = other_key.private_bytes(
+        serialization.Encoding.DER,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    with pytest.raises(module.UnsupportedResult):
+        module._materialize(("rsa_private_key", payload))
 
 
 @pytest.mark.parametrize("correct", [True, False])
