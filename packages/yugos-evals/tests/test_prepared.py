@@ -253,7 +253,6 @@ def test_multi_scorer_entries_freeze_the_authoritative_scorer(
 def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
     # expression_equivalance calls get_model(None) with the gold target in the
     # prompt. Restoring or grading MATH must not construct or run that scorer.
-    from inspect_ai.scorer import CORRECT
     from inspect_ai.scorer._scorer import unique_scorer_name
 
     module = importlib.import_module("inspect_evals.math.math")
@@ -268,7 +267,7 @@ def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "hf_dataset", lambda **kwargs: pytest.fail("source reloaded"))
 
     def banned_scorer(*args, **kwargs):
-        raise AssertionError("MATH constructed a scorer other than expression_exact_match")
+        raise AssertionError("MATH constructed an upstream equivalence scorer")
 
     monkeypatch.setattr(module, "expression_equivalance", banned_scorer)
     monkeypatch.setattr(module, "expression_exact_match_sympy", banned_scorer)
@@ -284,15 +283,16 @@ def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
             names.append(unique_scorer_name(scorer, names))
         return names
 
-    assert scorer_names(native) == ["expression_exact_match"]
-    assert scorer_names(prepared) == ["expression_exact_match"]
+    assert scorer_names(native) == ["math_equivalence"]
+    assert scorer_names(prepared) == ["math_equivalence"]
+    assert questions[0].inspect_task["builder_args"]["grading_revision"] == 1
     for label, task in (("native", native), ("prepared", prepared)):
         miner = ScriptedRouter("ANSWER: 2")
         log = run(task, miner, tmp_path / label)
         assert log.status == "success"
         [sample] = log.samples
-        assert list(sample.scores) == ["expression_exact_match"]
-        assert sample.scores["expression_exact_match"].value == CORRECT
+        assert list(sample.scores) == ["math_equivalence"]
+        assert sample.scores["math_equivalence"].value == 1.0
         assert len(miner.calls) == 1
         assert "Look at the following two expressions" not in miner.seen()
 
@@ -412,7 +412,7 @@ def test_prepared_mbpp_keeps_the_captured_fewshot_prompt(monkeypatch):
     )
     monkeypatch.setattr(module, "hf_dataset", lambda **kwargs: pytest.fail("source reloaded"))
     [(prepared, definition)] = restore_tasks(questions)
-    assert definition.scorer == "verify"
+    assert definition.scorer == "mbpp_with_imports"
 
     def template(task):
         for solver in task.solver:
@@ -503,7 +503,15 @@ def test_simpleqa_native_and_prepared_grading_agree_without_loading_sources(
             return RouterReply(content=letter, finish_reason="stop")
         return RouterReply(
             tool_calls=(
-                RouterToolCall(id="verdict", function="submit", arguments={"grade": grade}),
+                RouterToolCall(
+                    id="verdict",
+                    function="submit",
+                    arguments={
+                        "grade": grade,
+                        "extracted_answer": "candidate answer",
+                        "explanation": "fixture",
+                    },
+                ),
             ),
             finish_reason="tool_calls",
         )

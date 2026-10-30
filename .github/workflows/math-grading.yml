@@ -24,9 +24,10 @@ jobs:
       - run: python -m pip install uv==0.8.8
       - run: uv sync --frozen --python ${{ matrix.python }}
       - name: Resource failures, legacy parity and native task round trips
-        run: .venv/bin/python -m pytest packages/yugos/tests/test_concurrent_calls.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/test_math_answer.py packages/yugos-evals/tests/test_math_counterexample.py packages/yugos-evals/tests/test_pairwise_judge.py packages/yugos-evals/tests/test_cruxeval.py -q
+        run: .venv/bin/python -m pytest packages/yugos/tests/test_concurrent_calls.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/test_math_answer.py packages/yugos-evals/tests/test_math_counterexample.py packages/yugos-evals/tests/test_pairwise_judge.py packages/yugos-evals/tests/test_cruxeval.py packages/yugos-evals/tests/test_grading_corrections.py -q
       - name: Changed Python source checks
         run: |
           .venv/bin/ruff check packages/yugos/src/yugos/inference/calls.py packages/yugos/tests/test_concurrent_calls.py
           .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/scorers/math.py packages/yugos-evals/src/yugos_evals/scorers/_math*.py packages/yugos-evals/src/yugos_evals/scorers/_outcome.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/math_worker_fixture.py
+          .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/corrections.py packages/yugos-evals/src/yugos_evals/scorers/math_equivalence.py packages/yugos-evals/src/yugos_evals/scorers/benchmark_fixes.py packages/yugos-evals/tests/test_grading_corrections.py
           .venv/bin/ruff format --check packages/yugos-evals/src/yugos_evals/scorers/math.py packages/yugos-evals/src/yugos_evals/scorers/_math*.py packages/yugos-evals/src/yugos_evals/scorers/_outcome.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/math_worker_fixture.py

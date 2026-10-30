@@ -159,17 +159,20 @@ def prepare_task(task: Task, **options):
 
         task.scorer = [bigcodebench_scorer()]
         task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
-    if name == "inspect_evals/math":
-        # Upstream also builds a model equivalence scorer. Inspect would run it,
-        # sending the gold target to the model under evaluation. Keep the
-        # deterministic exact-match scorer on this task object too.
-        module = importlib.import_module(_MODULES[name])
-        task.scorer = [module.expression_exact_match()]
+    from .corrections import REVISION, TASKS, correct_task
+
+    short_name = name.split("/")[1]
+    correct_task(task, short_name, args)
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
         origin={"task": name, "args": args},
-        builder_args={"task": name, "args": args, "fewshot_samples": fewshot_samples},
+        builder_args={
+            "task": name,
+            "args": args,
+            "fewshot_samples": fewshot_samples,
+            **({"grading_revision": REVISION} if short_name in TASKS else {}),
+        },
         **options,
     )
 
@@ -187,10 +190,19 @@ def _mbpp_template(task: Task) -> str:
     return templates[0]
 
 
-def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] = ()) -> Task:
+def build(
+    *,
+    options: dict,
+    task: str,
+    args: dict,
+    fewshot_samples: list[dict] = (),
+    grading_revision: int = 0,
+) -> Task:
     """Build native solvers, agents, tools and scorers without calling source factories."""
     if task not in _MODULES:
         raise ValueError(f"unknown prepared task: {task}")
+    if grading_revision not in (0, 1):
+        raise ValueError(f"unsupported grading revision: {grading_revision}")
     module = importlib.import_module(_MODULES[task])
     name = task.split("/")[1]
     solver, scorer, setup, metrics = generate(), None, None, None
@@ -434,4 +446,8 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         scorer = module.math_answer_scorer()
     if metrics is not None:
         options = {**options, "metrics": metrics}
+    if grading_revision:
+        from .corrections import corrected_scorer
+
+        scorer = corrected_scorer(name, args) or scorer
     return Task(**options, solver=solver, scorer=scorer, setup=setup)

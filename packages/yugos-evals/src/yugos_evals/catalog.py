@@ -255,10 +255,9 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
     _upstream(
         "math",
         "math_code",
-        scorer="expression_exact_match",
+        scorer="math_equivalence",
         notes=(
-            "All levels and subjects, zero-shot. Scored only by expression_exact_match. "
-            "The model equivalence scorer is not constructed."
+            "All levels and subjects, zero-shot. Deterministic answer equivalence; no model judge."
         ),
     ),
     # Agentic
@@ -491,20 +490,8 @@ def load_task(benchmark: BenchmarkEntry, **args: Any) -> Task:
     if factory is None:
         raise ValueError(f"{benchmark.task} is not installed")
     task = pin_roles(factory(**{**benchmark.args, **args}), benchmark)
-    if benchmark.id == "math":
-        # The upstream factory also registers a model equivalence scorer. Inspect
-        # runs every scorer, so the catalog task keeps only expression_exact_match.
-        from inspect_ai.scorer._scorer import unique_scorer_name
+    from .corrections import correct_task
 
-        names: list[str] = []
-        kept = []
-        for item in task.scorer or ():
-            scorer_name = unique_scorer_name(item, names)
-            names.append(scorer_name)
-            if scorer_name == "expression_exact_match":
-                kept.append(item)
-        if len(kept) != 1:
-            raise ValueError("math requires the expression_exact_match scorer")
-        task.scorer = kept
+    correct_task(task, benchmark.task.split("/")[1], {**benchmark.args, **args})
     task.dataset = with_sample_ids(task.dataset)
     return task

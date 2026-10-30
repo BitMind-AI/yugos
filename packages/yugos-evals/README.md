@@ -162,3 +162,15 @@ default is the official `python:3.12-slim` index; pass
 3.11+ and the standard library. A `local` sandbox is refused.
 
 Contributor test instructions are in the [repository development guide](../../README.md#development).
+
+### Grading revisions
+
+New MATH, HumanEval, MBPP and SimpleQA packs record `grading_revision: 1`
+in their prepared recipe and a matching task version. This revision uses
+deterministic MATH equivalence, corrected code tests and MBPP test imports,
+and structured SimpleQA answers with an integer precision check. The explicit
+SimpleQA `original` scorer retains its paper grading contract.
+
+Frozen recipes without this field use the original native graders. Restoration
+does not alter frozen samples. To adopt corrected prompts, tests or graders,
+prepare a new pack and recalibrate it; retain the previous pack and results.

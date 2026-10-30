@@ -14,6 +14,7 @@ from inspect_ai.scorer import Target
 from yugos.evaluation.grades import GradeCode
 from yugos_evals.scorers import _math_process
 from yugos_evals.scorers.math import grade_math, math_answer_scorer, reference_exclusion
+from yugos_evals.scorers.math_equivalence import math_equivalence
 
 
 @pytest.fixture
@@ -24,10 +25,15 @@ def worker_fixture(monkeypatch):
     monkeypatch.setattr(_math_process, "TIMEOUT_S", 1)
 
 
-def test_timeout_is_unscored_and_reaps_even_a_worker_ignoring_termination(tmp_path, worker_fixture):
+@pytest.mark.parametrize(
+    "factory,response", [(math_answer_scorer, "stall"), (math_equivalence, "ANSWER: stall")]
+)
+def test_timeout_is_unscored_and_reaps_even_a_worker_ignoring_termination(
+    tmp_path, worker_fixture, factory, response
+):
     marker = tmp_path / "child.pid"
     start = time.monotonic()
-    score = anyio.run(math_answer_scorer(), task_state("stall"), Target(str(marker)))
+    score = anyio.run(factory(), task_state(response), Target(str(marker)))
     assert time.monotonic() - start < 10
     assert math.isnan(score.value)
     assert score.metadata == {
