@@ -161,6 +161,80 @@ def test_path_descriptors_cannot_select_custom_constructors_or_pathlike_callback
 
 
 @pytest.mark.parametrize("correct", [True, False])
+def test_deque_results_preserve_native_equality_and_capacity(correct):
+    candidate = (
+        "from collections import deque\ndef task_func(): return deque([1, 2], maxlen=3)"
+        if correct
+        else "def task_func(): return [1, 2]"
+    )
+    tests = """
+import unittest
+from collections import deque
+class TestCases(unittest.TestCase):
+    def test_deque(self):
+        value = task_func()
+        self.assertIsInstance(value, deque)
+        self.assertEqual(value, deque([1, 2], maxlen=3))
+        value.append(3)
+        value.append(4)
+        self.assertEqual(list(value), [2, 3, 4])
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+def test_deque_payloads_cannot_truncate_values_or_supply_invalid_capacity():
+    spec = importlib.util.spec_from_file_location("deque_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for value in [(-1, ()), (False, ()), (0, (("scalar", 1),)), (2, [1, 2])]:
+        with pytest.raises(module.CandidateError):
+            module._materialize(("deque", value))
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_test_module_imports_reach_the_solution_without_assertions_or_private_globals(correct):
+    candidate = (
+        """
+def task_func(values):
+    return np.asarray(values).sum().item(), 'HIDDEN_EXPECTED' in globals(), 'TestCases' in globals()
+"""
+        if correct
+        else "def task_func(values): return 0, True, True"
+    )
+    tests = """
+import unittest
+import numpy as np
+HIDDEN_EXPECTED = 'test-only-value'
+class TestCases(unittest.TestCase):
+    def test_library_alias(self):
+        self.assertEqual(task_func([1, 2, 3]), (6, False, False))
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+def test_import_bindings_preserve_module_aliases_from_imports_and_local_scope():
+    candidate = """
+def task_func():
+    return math_alias.sqrt(9), pure_path('a').name, 'local_alias' in globals()
+"""
+    tests = """
+import unittest
+import math as math_alias
+from pathlib import PurePosixPath as pure_path
+class TestCases(unittest.TestCase):
+    def test_aliases(self):
+        import fractions as local_alias
+        self.assertEqual(task_func(), (3.0, 'a', False))
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is True and report["cause"] == "all_pass"
+
+
+@pytest.mark.parametrize("correct", [True, False])
 def test_plot_methods_receive_native_array_arguments(correct, matplotlib_cache, monkeypatch):
     monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
     monkeypatch.setenv("MPLBACKEND", "Agg")

@@ -818,10 +818,15 @@ def _transfer(value, *, allow_axes=True):
         return ("scalar", str(value))
     if type(value) is Decimal:
         return ("decimal", str(value))
-    from collections import Counter
+    from collections import Counter, deque
 
     if type(value) is Counter:
         return ("counter", _transfer(dict(value), allow_axes=allow_axes))
+    if type(value) is deque:
+        return (
+            "deque",
+            (value.maxlen, tuple(_transfer(v, allow_axes=allow_axes) for v in value)),
+        )
     if type(value) in (date, datetime, datetime_time):
         return (type(value).__name__, value.isoformat())
     if type(value) is timedelta:
@@ -967,6 +972,18 @@ def _materialize(value, *, allow_axes=True):
         from collections import Counter
 
         return Counter(_materialize(data, allow_axes=allow_axes))
+    if kind == "deque":
+        from collections import deque
+
+        if (
+            type(data) is not tuple
+            or len(data) != 2
+            or (data[0] is not None and (type(data[0]) is not int or data[0] < 0))
+            or type(data[1]) is not tuple
+            or (data[0] is not None and len(data[1]) > data[0])
+        ):
+            raise CandidateError("invalid deque value")
+        return deque((_materialize(v, allow_axes=allow_axes) for v in data[1]), maxlen=data[0])
     if kind == "arrow":
         return _arrow_dataframe(data)
     if kind == "dataframe":
@@ -1004,7 +1021,43 @@ def _materialize(value, *, allow_axes=True):
     raise CandidateError("invalid candidate return value")
 
 
-def _candidate_serve(sock, candidate, value_tag):
+def _test_import_bindings(source):
+    """Describe only test-module imports, without sharing assertions or test globals."""
+    bindings = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Import):
+            bindings.extend(
+                ("module", name.name, name.asname or name.name.split(".")[0], bool(name.asname))
+                for name in node.names
+            )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module not in {None, "__future__", "__main__"}
+        ):
+            bindings.extend(
+                ("from", node.module, name.name, name.asname or name.name)
+                for name in node.names
+                if name.name != "*"
+            )
+    return tuple(bindings)
+
+
+def _apply_test_imports(namespace, bindings):
+    """Restore the library aliases shared by upstream solution and test namespaces."""
+    for kind, module_name, name, alias in bindings:
+        module = importlib.import_module(module_name)
+        if kind == "module":
+            namespace[name] = (
+                module if alias else importlib.import_module(module_name.split(".")[0])
+            )
+        elif kind == "from":
+            namespace[alias] = getattr(module, name)
+        else:
+            raise CandidateError("invalid test import binding")
+
+
+def _candidate_serve(sock, candidate, value_tag, test_imports=()):
     global _fixture_connection
     with open(os.devnull, "w") as sink:
         os.dup2(sink.fileno(), 1)
@@ -1071,6 +1124,7 @@ def _candidate_serve(sock, candidate, value_tag):
 
                     np.random.set_state(state[1])
             exec(compile(candidate, "<candidate>", "exec"), namespace)
+            _apply_test_imports(namespace, test_imports)
             loaded = True
             self.exposed_configure(patches)
             function = namespace.get("task_func")
@@ -1273,9 +1327,13 @@ def run(request):
         conn.prepare_callback = prepare_call
         try:
             process.stdin.write(
-                json.dumps({"candidate": request["candidate"], "value_tag": conn.value_tag}).encode(
-                    "utf-8"
-                )
+                json.dumps(
+                    {
+                        "candidate": request["candidate"],
+                        "value_tag": conn.value_tag,
+                        "test_imports": _test_import_bindings(request["tests"]),
+                    }
+                ).encode("utf-8")
             )
             process.stdin.close()
             import random
@@ -1402,7 +1460,10 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ["--candidate"]:
         payload = json.load(sys.stdin)
         _candidate_serve(
-            socket.socket(fileno=int(sys.argv[2])), payload["candidate"], payload["value_tag"]
+            socket.socket(fileno=int(sys.argv[2])),
+            payload["candidate"],
+            payload["value_tag"],
+            payload.get("test_imports", ()),
         )
     else:
         request = json.load(sys.stdin)
