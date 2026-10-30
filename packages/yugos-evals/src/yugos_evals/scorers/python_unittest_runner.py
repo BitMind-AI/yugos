@@ -467,6 +467,64 @@ def _arrow_dataframe(payload):
     return frame
 
 
+def _zoneinfo_columns(frame):
+    """Retain canonical ZoneInfo providers that Arrow otherwise replaces."""
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+
+    columns = []
+    for position, dtype in enumerate(frame.dtypes):
+        if not isinstance(dtype, pd.DatetimeTZDtype) or type(dtype.tz) is not ZoneInfo:
+            continue
+        key = dtype.tz.key
+        if type(key) is not str or not 0 < len(key) <= 255:
+            raise UnsupportedResult("timezone has no portable key")
+        try:
+            canonical = ZoneInfo(key)
+        except (ValueError, KeyError) as exc:
+            raise UnsupportedResult("timezone key cannot be restored") from exc
+        if dtype.tz is not canonical:
+            # A from_file timezone can claim another zone's name. A key alone
+            # cannot prove its transition rules, so leave it unavailable.
+            raise UnsupportedResult("noncanonical timezone cannot be restored")
+        columns.append((position, key))
+    return tuple(columns)
+
+
+def _restore_zoneinfo(frame, columns):
+    """Restore only bounded descriptors matching the decoded Arrow schema."""
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+
+    if type(columns) is not tuple or len(columns) > len(frame.columns):
+        raise CandidateError("invalid timezone column metadata")
+    seen = set()
+    for item in columns:
+        if type(item) is not tuple or len(item) != 2:
+            raise CandidateError("invalid timezone column descriptor")
+        position, key = item
+        if (
+            type(position) is not int
+            or not 0 <= position < len(frame.columns)
+            or position in seen
+            or type(key) is not str
+            or not 0 < len(key) <= 255
+        ):
+            raise CandidateError("invalid timezone column descriptor")
+        dtype = frame.iloc[:, position].dtype
+        if not isinstance(dtype, pd.DatetimeTZDtype) or str(dtype.tz) != key:
+            raise CandidateError("timezone column differs from Arrow schema")
+        try:
+            zone = ZoneInfo(key)
+        except (ValueError, KeyError) as exc:
+            raise CandidateError("invalid timezone key") from exc
+        seen.add(position)
+        frame.isetitem(position, frame.iloc[:, position].dt.tz_convert(zone))
+    return frame
+
+
 def _transfer(value, *, allow_axes=True):
     """Use Arrow for DataFrames and native RPyC references for Matplotlib axes."""
     if isinstance(value, FixtureProxy):
@@ -521,21 +579,30 @@ def _transfer(value, *, allow_axes=True):
             )
         if type(value) is pd.DataFrame:
             try:
+                zones = _zoneinfo_columns(value)
                 table = pa.Table.from_pandas(value, preserve_index=True)
                 sink = pa.BufferOutputStream()
                 with pa.ipc.new_stream(sink, table.schema) as writer:
                     writer.write_table(table)
                 payload = sink.getvalue().to_pybytes()
                 # Reject lossy conversion instead of changing what tests observe.
-                pd.testing.assert_frame_equal(value, _arrow_dataframe(payload))
-            except (pa.ArrowException, AssertionError, TypeError, ValueError) as exc:
+                pd.testing.assert_frame_equal(
+                    value, _restore_zoneinfo(_arrow_dataframe(payload), zones)
+                )
+            except (
+                pa.ArrowException,
+                AssertionError,
+                TypeError,
+                ValueError,
+                CandidateError,
+            ) as exc:
                 raise UnsupportedResult("DataFrame cannot round-trip through Arrow") from exc
             object_columns = tuple(
                 (index, tuple(_transfer(v, allow_axes=allow_axes) for v in value.iloc[:, index]))
                 for index, dtype in enumerate(value.dtypes)
                 if pd.api.types.is_object_dtype(dtype)
             )
-            return ("dataframe", (payload, object_columns))
+            return ("dataframe", (payload, object_columns, zones))
     if type(value).__module__.startswith("matplotlib"):
         from matplotlib.axes import Axes
         from matplotlib.figure import Figure
@@ -664,8 +731,11 @@ def _materialize(value, *, allow_axes=True):
     if kind == "arrow":
         return _arrow_dataframe(data)
     if kind == "dataframe":
-        payload, columns = data
-        frame = _arrow_dataframe(payload)
+        if type(data) is not tuple or len(data) not in (2, 3):
+            raise CandidateError("invalid DataFrame payload")
+        payload, columns = data[:2]
+        zones = data[2] if len(data) == 3 else ()
+        frame = _restore_zoneinfo(_arrow_dataframe(payload), zones)
         for column, values in columns:
             if (
                 type(column) is not int

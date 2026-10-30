@@ -298,6 +298,111 @@ class TestCases(unittest.TestCase):
     assert report["passed"] and report["cause"] == "all_pass"
 
 
+@pytest.mark.parametrize(
+    "zone", ["UTC", "America/New_York", "Europe/Berlin", "Asia/Tokyo", "Australia/Lord_Howe"]
+)
+def test_zoneinfo_frames_preserve_provider_dst_nat_and_empty_values_in_both_directions(zone):
+    tests = f"""
+import unittest
+import pandas as pd
+from zoneinfo import ZoneInfo
+class TestCases(unittest.TestCase):
+    def test_round_trip(self):
+        times = pd.to_datetime(['2026-11-01T05:30:00Z', None, '2026-11-01T06:30:00Z'])
+        times = times.tz_convert(ZoneInfo({zone!r}))
+        frame = pd.DataFrame({{'time': times, 'label': ['first', 'missing', 'last']}})
+        frame.index = pd.Index(['a', 'b', 'c'], name='row')
+        for value in (frame, frame.iloc[:0]):
+            result = task_func(value)
+            pd.testing.assert_frame_equal(result, value)
+            self.assertIs(type(result['time'].dtype.tz), ZoneInfo)
+        self.assertEqual(task_func(frame)['time'].iloc[-1].fold, frame['time'].iloc[-1].fold)
+"""
+    report = _run("def task_func(frame): return frame.copy()", tests=tests, timeout_s=15)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_wrong_timestamp_output_gets_native_test_failure_instead_of_unavailable_grade():
+    candidate = """
+import pandas as pd
+from zoneinfo import ZoneInfo
+def task_func():
+    return pd.DataFrame({'display': pd.date_range('2026-06-01', periods=2, tz=ZoneInfo('UTC'))})
+"""
+    tests = """
+import unittest
+class TestCases(unittest.TestCase):
+    def test_format(self):
+        self.assertEqual(task_func()['display'].tolist(), ['2026-06-01', '2026-06-02'])
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is False and report["cause"] == "test_failure"
+    assert report["tests_run"] == report["tests_expected"] == 1
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_noncanonical_zoneinfo_stays_unavailable_instead_of_changing_timezone_rules(custom):
+    timezone = (
+        "next(ZoneInfo.from_file(open(str(Path(p) / 'UTC'), 'rb'), key='America/New_York') "
+        "for p in TZPATH if (Path(p) / 'UTC').is_file())"
+        if custom
+        else "ZoneInfo.no_cache('America/New_York')"
+    )
+    candidate = f"""
+from pathlib import Path
+from zoneinfo import TZPATH, ZoneInfo
+import pandas as pd
+def task_func():
+    return pd.DataFrame({{'time': pd.date_range('2026-01-01', periods=2, tz={timezone})}})
+"""
+    report = _run(candidate, timeout_s=10)
+    assert report["passed"] is False and report["cause"] == "unsupported_result"
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        ((-1, "America/New_York"),),
+        ((True, "America/New_York"),),
+        (("0", "America/New_York"),),
+        ((0, "America/Chicago"),),
+        ((0, "../../etc/passwd"),),
+        ((0, ["America/New_York"]),),
+        ((0, "America/New_York"), (0, "America/New_York")),
+        ((0, "America/New_York", "extra"),),
+    ],
+)
+def test_untrusted_timezone_descriptors_cannot_relabel_arrow_columns(columns):
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+
+    spec = importlib.util.spec_from_file_location("timezone_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    frame = pd.DataFrame(
+        {"time": pd.date_range("2026-01-01", periods=2, tz=ZoneInfo("America/New_York"))}
+    )
+    with pytest.raises(module.CandidateError):
+        module._restore_zoneinfo(frame, columns)
+
+
+def test_existing_dataframe_payload_without_timezone_descriptors_still_decodes():
+    import pandas as pd
+    import pyarrow as pa
+
+    spec = importlib.util.spec_from_file_location("legacy_frame_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    frame = pd.DataFrame({"value": [1, 2]})
+    table = pa.Table.from_pandas(frame, preserve_index=True)
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    result = module._materialize(("dataframe", (sink.getvalue().to_pybytes(), ())))
+    pd.testing.assert_frame_equal(result, frame)
+
+
 def test_unsupported_arrow_values_do_not_become_incorrect_answers():
     candidate = 'import pandas as pd\ndef task_func(): return pd.DataFrame({"value": [object()]})'
     report = _run(candidate, timeout_s=10)
@@ -427,6 +532,7 @@ def test_bigcodebench_freeze_and_restore_selects_supervised_scorer(monkeypatch):
         "libs": [],
     }
     monkeypatch.setattr(upstream, "load_dataset", lambda *a, **kw: [record])
+    monkeypatch.setattr(upstream, "get_images_from_compose", lambda *a, **kw: [DIGEST_IMAGE])
     monkeypatch.setattr(
         upstream,
         "force_build_or_pull_docker_image",
