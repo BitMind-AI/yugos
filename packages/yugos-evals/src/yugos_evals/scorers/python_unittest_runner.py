@@ -382,6 +382,7 @@ class FixtureRegistry:
         "__next__",
         "__getitem__",
         "__len__",
+        "__length_hint__",
         "__bool__",
         "__call__",
         "__setitem__",
