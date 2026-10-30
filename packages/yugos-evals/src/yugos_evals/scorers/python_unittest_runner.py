@@ -33,6 +33,7 @@ from rpyc.core.protocol import Connection
 from rpyc.core.stream import SocketStream
 
 MAX_RPC_BYTES = 16_000_000
+MAX_RSA_BYTES = 16_384
 FIXTURE_CALL = 101
 _fixture_registry = None
 _fixture_connection = None
@@ -118,6 +119,10 @@ class SupervisorConnection(Connection):
         self._send(consts.MSG_REPLY, seq, self._box(result))
 
     def _box(self, obj):
+        if getattr(self, "value_tag", None) and type(obj).__module__.startswith(
+            ("numpy", "pandas")
+        ):
+            return super()._box((self.value_tag, _transfer(obj, allow_axes=False)))
         boxed = super()._box(obj)
         if boxed[0] == consts.LABEL_REMOTE_REF:
             self.fixtures.register(obj)
@@ -211,9 +216,30 @@ class SupervisorConnection(Connection):
             raise
 
 
+class CandidateConnection(Connection):
+    """Restore explicitly tagged trusted array arguments to candidate plot methods."""
+
+    def _unbox(self, package):
+        value = super()._unbox(package)
+        if (
+            type(value) is tuple
+            and len(value) == 2
+            and type(value[0]) is str
+            and value[0] == getattr(self, "value_tag", None)
+        ):
+            return _materialize(value[1], allow_axes=False)
+        return value
+
+
 def _exception_record(error):
+    from urllib.error import HTTPError
+
     args = (
-        (error.msg, error.doc, error.pos) if isinstance(error, json.JSONDecodeError) else error.args
+        (error.msg, error.doc, error.pos)
+        if isinstance(error, json.JSONDecodeError)
+        else (error.url, error.code, error.msg, error.hdrs, error.fp)
+        if isinstance(error, HTTPError)
+        else error.args
     )
     return (type(error).__module__, type(error).__qualname__, _transfer(args))
 
@@ -242,6 +268,44 @@ class FixtureProxy:
     def __init__(self, identity, fixture_type=None):
         self.identity = identity
         self.fixture_type = fixture_type
+
+    @property
+    def __name__(self):
+        if "_name_override" in self.__dict__:
+            return self._name_override
+        return self._request("get", "__name__")
+
+    @__name__.setter
+    def __name__(self, value):
+        self._name_override = value
+
+    @property
+    def __signature__(self):
+        if "_signature_override" in self.__dict__:
+            return self._signature_override
+        import inspect
+
+        record = self._request("signature")
+
+        def restore(value):
+            return value[1] if value[0] else inspect.Parameter.empty
+
+        return inspect.Signature(
+            [
+                inspect.Parameter(
+                    p["name"],
+                    p["kind"],
+                    default=restore(p["default"]),
+                    annotation=restore(p["annotation"]),
+                )
+                for p in record["parameters"]
+            ],
+            return_annotation=restore(record["return_annotation"]),
+        )
+
+    @__signature__.setter
+    def __signature__(self, value):
+        self._signature_override = value
 
     @property
     def __class__(self):
@@ -402,6 +466,7 @@ class FixtureRegistry:
         return tuple(result)
 
     def dispatch(self, request):
+        from types import FunctionType
         from unittest.mock import Mock
 
         try:
@@ -413,7 +478,29 @@ class FixtureRegistry:
             kwargs = _materialize(encoded_kwargs)
             if type(args) is not tuple or type(kwargs) is not dict:
                 raise CandidateError("invalid fixture arguments")
-            if operation == "truth":
+            if operation == "signature":
+                if type(value) is not FunctionType:
+                    raise AttributeError("__signature__")
+                import inspect
+
+                signature = inspect.signature(value)
+
+                def record(v):
+                    return (False, None) if v is inspect.Parameter.empty else (True, v)
+
+                result = {
+                    "parameters": [
+                        {
+                            "name": p.name,
+                            "kind": int(p.kind),
+                            "default": record(p.default),
+                            "annotation": record(p.annotation),
+                        }
+                        for p in signature.parameters.values()
+                    ],
+                    "return_annotation": record(signature.return_annotation),
+                }
+            elif operation == "truth":
                 result = bool(value)
             elif operation == "call":
                 if not isinstance(value, Mock) and identity not in self.methods:
@@ -423,7 +510,11 @@ class FixtureRegistry:
                 if (
                     type(name) is not str
                     or name in self._BLOCKED
-                    or (name.startswith("_") and name not in self._SPECIAL)
+                    or (
+                        name.startswith("_")
+                        and name not in self._SPECIAL
+                        and not (type(value) is FunctionType and name == "__name__")
+                    )
                 ):
                     raise CandidateError("fixture attribute is not available")
                 if (
@@ -437,7 +528,11 @@ class FixtureRegistry:
                         and hasattr(value, "__next__")
                     )
                 ):
-                    if name.startswith("_") and name not in self._SPECIAL:
+                    if (
+                        name.startswith("_")
+                        and name not in self._SPECIAL
+                        and not (type(value) is FunctionType and name == "__name__")
+                    ):
                         raise CandidateError("fixture operation is not available")
                 result = getattr(value, name)
                 if operation == "method":
@@ -583,6 +678,10 @@ def _transfer(value, *, allow_axes=True):
                     type(value).__qualname__,
                 ),
             )
+    from types import FunctionType
+
+    if _fixture_registry is not None and type(value) is FunctionType:
+        return ("fixture", (_fixture_registry.register(value), "types", "FunctionType"))
     if type(value).__module__.startswith("numpy"):
         import numpy as np
 
@@ -659,6 +758,19 @@ def _transfer(value, *, allow_axes=True):
             ) as exc:
                 raise UnsupportedResult("DataFrame cannot round-trip through Arrow") from exc
             return ("dataframe", (payload, object_columns, zones))
+    if type(value).__module__.startswith("cryptography"):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
+        if isinstance(value, RSAPrivateKey):
+            payload = value.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+            if len(payload) > MAX_RSA_BYTES:
+                raise UnsupportedResult("RSA fixture exceeds the value limit")
+            return ("rsa_private_key", payload)
     if type(value).__module__.startswith("matplotlib"):
         from matplotlib.axes import Axes
         from matplotlib.figure import Figure
@@ -720,6 +832,16 @@ def _materialize(value, *, allow_axes=True):
             except (ImportError, AttributeError):
                 fixture_type = None
         return FixtureProxy(identity, fixture_type)
+    if kind == "rsa_private_key":
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
+        if type(data) is not bytes or not 0 < len(data) <= MAX_RSA_BYTES:
+            raise UnsupportedResult("invalid RSA fixture payload")
+        key = serialization.load_der_private_key(data, password=None)
+        if not isinstance(key, RSAPrivateKey):
+            raise UnsupportedResult("fixture is not an RSA private key")
+        return key
     if kind == "exception":
         return _make_exception(data, candidate=_fixture_registry is None)
     if kind in {"pandas_timestamp", "pandas_na", "pandas_nat"}:
@@ -821,7 +943,7 @@ def _materialize(value, *, allow_axes=True):
     raise CandidateError("invalid candidate return value")
 
 
-def _candidate_serve(sock, candidate):
+def _candidate_serve(sock, candidate, value_tag):
     global _fixture_connection
     with open(os.devnull, "w") as sink:
         os.dup2(sink.fileno(), 1)
@@ -832,6 +954,8 @@ def _candidate_serve(sock, candidate):
     loaded = False
 
     class CandidateService(rpyc.Service):
+        _protocol = CandidateConnection
+
         def exposed_transfer(self, value):
             return _transfer(value)
 
@@ -923,13 +1047,15 @@ def _candidate_serve(sock, candidate):
                 ),
             )
 
-    # Public access is enabled only in the untrusted candidate process, for
-    # native netrefs to plot methods/properties. No pickle or custom exceptions.
+    # Trusted assertions may inspect candidate-owned private attributes. These
+    # permissions apply only in the untrusted process; supervisor callbacks
+    # still pass the strict fixture guards. No pickle or custom exceptions.
     channel = BoundedChannel(SocketStream(sock))
     conn = CandidateService._connect(
         channel,
         config={
             "allow_public_attrs": True,
+            "allow_all_attrs": True,
             "allow_setattr": True,
             "allow_delattr": True,
             "allow_pickle": False,
@@ -937,6 +1063,7 @@ def _candidate_serve(sock, candidate):
             "instantiate_custom_exceptions": False,
         },
     )
+    conn.value_tag = value_tag
     _fixture_connection = conn
     try:
         conn.serve_all()
@@ -1071,6 +1198,7 @@ def run(request):
         conn.deadline = deadline
         conn.timeout_callback = mark_timeout
         conn.fixtures = fixtures
+        conn.value_tag = os.urandom(32).hex()
         last_connection = conn
         conn._config["allow_getattr"] = True
         conn._config["allow_safe_attrs"] = True
@@ -1083,7 +1211,11 @@ def run(request):
 
         conn.prepare_callback = prepare_call
         try:
-            process.stdin.write(json.dumps({"candidate": request["candidate"]}).encode("utf-8"))
+            process.stdin.write(
+                json.dumps({"candidate": request["candidate"], "value_tag": conn.value_tag}).encode(
+                    "utf-8"
+                )
+            )
             process.stdin.close()
             import random
 
@@ -1208,7 +1340,9 @@ def run(request):
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--candidate"]:
         payload = json.load(sys.stdin)
-        _candidate_serve(socket.socket(fileno=int(sys.argv[2])), payload["candidate"])
+        _candidate_serve(
+            socket.socket(fileno=int(sys.argv[2])), payload["candidate"], payload["value_tag"]
+        )
     else:
         request = json.load(sys.stdin)
         with redirect_stdout(sys.stderr):

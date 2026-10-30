@@ -24,6 +24,185 @@ TESTS = (
 )
 
 
+@pytest.mark.parametrize("correct", [True, False])
+def test_plot_methods_receive_native_array_arguments(correct, matplotlib_cache, monkeypatch):
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
+    monkeypatch.setenv("MPLBACKEND", "Agg")
+    candidate = (
+        "import matplotlib.pyplot as plt\ndef task_func(): return plt.subplots()[1]"
+        if correct
+        else "def task_func(): return None"
+    )
+    tests = """
+import unittest
+import pandas as pd
+import numpy as np
+class TestCases(unittest.TestCase):
+    def test_array_arguments(self):
+        ax = task_func()
+        x, y = np.array([1, 2, 3]), pd.Series([3, 1, 2])
+        line, = ax.plot(x, y)
+        np.testing.assert_array_equal(line.get_xdata(), x)
+        np.testing.assert_array_equal(line.get_ydata(), y.to_numpy())
+        counts, _, _ = ax.hist(pd.Series([1, 2, 2, 3]), bins=[0.5, 1.5, 2.5, 3.5])
+        np.testing.assert_array_equal(counts, [1, 2, 1])
+"""
+    report = _run(candidate, tests=tests, timeout_s=20)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_rsa_fixture_signatures_verify_with_the_original_key(correct):
+    candidate = (
+        """
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+def task_func(key, data):
+    return key.sign(data, padding.PKCS1v15(), hashes.SHA256())
+"""
+        if correct
+        else "def task_func(key, data): return b'wrong signature'"
+    )
+    tests = """
+import unittest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+class TestCases(unittest.TestCase):
+    def test_signature(self):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        data = b'fixture input'
+        signature = task_func(key, data)
+        self.assertIsInstance(signature, bytes)
+        key.public_key().verify(signature, data, padding.PKCS1v15(), hashes.SHA256())
+"""
+    report = _run(candidate, tests=tests, timeout_s=15)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_function_inputs_preserve_names_signatures_and_lambda_defaults(correct):
+    candidate = (
+        """
+import inspect
+import types
+def task_func(function):
+    spec = inspect.getfullargspec(function)
+    return function.__name__, spec.args, sum(isinstance(v, types.LambdaType) for v in spec.defaults or ())
+"""
+        if correct
+        else "def task_func(function): return 'wrong', [], 0"
+    )
+    tests = """
+import unittest
+class TestCases(unittest.TestCase):
+    def test_signature(self):
+        def sample(x, y=lambda: 3): pass
+        self.assertEqual(task_func(sample), ('sample', ['x', 'y'], 1))
+    def test_keyword_only_signature(self):
+        def sample(x, *, y=4): pass
+        self.assertEqual(task_func(sample), ('sample', ['x'], 0))
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("attribute", ["__globals__", "__code__", "__closure__", "__dict__"])
+def test_function_metadata_does_not_grant_access_to_trusted_execution_state(attribute):
+    candidate = f"def task_func(function): return function._request('get', {attribute!r})"
+    tests = """
+import unittest
+HIDDEN_VALUE = 'trusted-only-value'
+class TestCases(unittest.TestCase):
+    def test_no_fixture_state_leak(self):
+        def sample(x): return HIDDEN_VALUE
+        self.assertEqual(task_func(sample), HIDDEN_VALUE)
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is False and report["cause"] == "test_failure"
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_trusted_assertions_can_inspect_candidate_owned_private_fields(correct):
+    rows = "[1, 2, 3]" if correct else "[]"
+    candidate = f"class Result:\n    def __init__(self): self._rows = {rows}\ndef task_func(): return Result()"
+    tests = """
+import unittest
+class TestCases(unittest.TestCase):
+    def test_private_rows(self):
+        result = task_func()
+        self.assertEqual(result._rows, [1, 2, 3])
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_http_error_fixture_keeps_constructor_fields_and_can_be_reraised(correct):
+    candidate = (
+        """
+import urllib.request
+from urllib.error import HTTPError
+def task_func(rethrow=False):
+    try:
+        urllib.request.urlopen('https://fixture.example')
+    except HTTPError as error:
+        if rethrow: raise
+        return error.url, error.code, error.msg, dict(error.hdrs)
+"""
+        if correct
+        else "def task_func(rethrow=False): return None"
+    )
+    tests = """
+import unittest
+from unittest.mock import patch
+from urllib.error import HTTPError
+class TestCases(unittest.TestCase):
+    def test_fields(self):
+        with patch('urllib.request.urlopen', side_effect=HTTPError('https://fixture.example', 403, 'Forbidden', {'x-fixture': 'yes'}, None)):
+            self.assertEqual(task_func(), ('https://fixture.example', 403, 'Forbidden', {'x-fixture': 'yes'}))
+    def test_rethrow(self):
+        with patch('urllib.request.urlopen', side_effect=HTTPError('https://fixture.example', 403, 'Forbidden', {'x-fixture': 'yes'}, None)):
+            with self.assertRaises(HTTPError) as caught:
+                task_func(True)
+            self.assertEqual(caught.exception.code, 403)
+            self.assertEqual(dict(caught.exception.hdrs), {'x-fixture': 'yes'})
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+def test_function_metadata_allows_matplotlib_to_adapt_mocked_show(matplotlib_cache, monkeypatch):
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
+    monkeypatch.setenv("MPLBACKEND", "Agg")
+    candidate = """
+import inspect
+import pandas as pd
+import matplotlib.pyplot as plt
+def task_func(function):
+    count = len(inspect.getfullargspec(function).args)
+    pd.DataFrame({'args': [count]}).plot(kind='bar')
+    plt.show()
+    return count
+"""
+    tests = """
+import unittest
+from unittest.mock import patch
+class TestCases(unittest.TestCase):
+    @patch('matplotlib.pyplot.show')
+    def test_show(self, show):
+        def sample(x, y=1): pass
+        self.assertEqual(task_func(sample), 2)
+        show.assert_called_once_with()
+"""
+    report = _run(candidate, tests=tests, reference=candidate, timeout_s=20)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
 @pytest.fixture(scope="session")
 def matplotlib_cache(tmp_path_factory):
     """Build fonts before tests measure the candidate execution deadline."""
