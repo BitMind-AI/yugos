@@ -118,6 +118,47 @@ def test_model_import_aliases_cannot_replace_trusted_test_helpers():
     assert report["passed"] is False and report["cause"] == "test_failure"
 
 
+@pytest.mark.parametrize("correct", [True, False])
+def test_socket_fixtures_do_not_replace_the_supervisor_transport(correct):
+    candidate = (
+        """
+import socket
+def task_func():
+    try:
+        with socket.socket() as channel:
+            channel.connect(('fixture.example', 1234))
+        return True
+    except OSError:
+        return False
+"""
+        if correct
+        else "def task_func(): return False\n"
+    )
+    tests = """
+import socket
+import unittest
+from unittest.mock import patch
+class TestCases(unittest.TestCase):
+    @patch('socket.socket')
+    def test_open(self, mocked):
+        self.assertTrue(task_func())
+        mocked.return_value.__enter__.return_value.connect.assert_called_once_with(
+            ('fixture.example', 1234)
+        )
+    @patch('socket.socket')
+    def test_closed(self, mocked):
+        mocked.return_value.__enter__.return_value.connect.side_effect = OSError
+        self.assertFalse(task_func())
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report == {
+        "passed": correct,
+        "cause": "all_pass" if correct else "test_failure",
+        "tests_run": 2,
+        "tests_expected": 2,
+    }
+
+
 def test_returned_handlers_observe_later_patches_and_mock_callbacks():
     candidate = """
 import smtplib

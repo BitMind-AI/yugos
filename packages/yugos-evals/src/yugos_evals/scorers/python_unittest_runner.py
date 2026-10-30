@@ -19,6 +19,7 @@ import sys
 import time
 import unittest
 import warnings
+from _socket import socketpair as _transport_socketpair
 from contextlib import ExitStack, redirect_stdout
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
@@ -986,7 +987,9 @@ def run(request):
         if time.monotonic() >= deadline:
             timed_out = True
             raise CandidateError("candidate timeout")
-        parent, child = socket.socketpair()
+        # Tests may mock socket.socket. The supervisor's IPC must remain real
+        # while those mocks are forwarded to the candidate as test fixtures.
+        parent, child = _transport_socketpair()
         # Only submitted code and the socket enter this fresh interpreter;
         # it inherits neither the supervisor's test data nor its call stack.
         process = subprocess.Popen(
