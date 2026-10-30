@@ -141,9 +141,8 @@ def pairwise_judge_scorer(judge_model: str | None = None) -> Scorer:
         if not candidate.strip():
             return to_score(
                 Outcome(
-                    GradeCode.NEEDS_REVIEW,
-                    status="unavailable",
-                    details={"cause": "missing_complete_answer"},
+                    GradeCode.INCORRECT,
+                    details={"cause": "empty_answer"},
                 )
             )
         judge = grader_model(judge_model)
