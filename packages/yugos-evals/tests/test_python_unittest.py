@@ -407,6 +407,61 @@ class TestCases(unittest.TestCase):
     assert report["tests_run"] == report["tests_expected"] == 1
 
 
+@pytest.mark.parametrize("wrong", [False, True])
+def test_mixed_dataframe_cells_round_trip_and_wrong_answers_still_fail(wrong):
+    tests = """
+import unittest
+import pandas as pd
+import numpy as np
+from decimal import Decimal
+class TestCases(unittest.TestCase):
+    def test_round_trip(self):
+        values = [1, 'apple', {'b': [3, None]}, (4, 5), Decimal('1.20'),
+                  b'bytes', None, pd.NA, np.int64(7)]
+        frame = pd.DataFrame({'mixed': values, 'number': range(len(values))})
+        frame.index = pd.Index([f'row-{i}' for i in range(len(values))], name='row')
+        for original in (frame, frame.iloc[:0], frame['mixed']):
+            actual = task_func(original)
+            if isinstance(original, pd.Series):
+                pd.testing.assert_series_equal(actual, original)
+            else:
+                pd.testing.assert_frame_equal(actual, original)
+"""
+    candidate = (
+        "def task_func(frame):\n result = frame.copy(deep=True)\n"
+        + (" if len(result): result.iloc[0] = 'wrong'\n" if wrong else "")
+        + " return result\n"
+    )
+    report = _run(candidate, tests=tests, timeout_s=15)
+    assert report["passed"] is not wrong
+    assert report["cause"] == ("test_failure" if wrong else "all_pass")
+    assert report["tests_run"] == report["tests_expected"] == 1
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        [(-1, ())],
+        ((-1, ()),),
+        ((True, ()),),
+        ((0, []),),
+        ((0, ()),),
+        ((0, (("scalar", 1),)), (0, (("scalar", 2),))),
+        ((1, (("scalar", 1),)),),
+        ((0, (("reference", object()),)),),
+    ],
+)
+def test_object_column_descriptors_cannot_replace_typed_columns_or_admit_references(columns):
+    import pandas as pd
+
+    spec = importlib.util.spec_from_file_location("object_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    frame = pd.DataFrame({"object": pd.Series([None], dtype=object), "number": [1]})
+    with pytest.raises(module.CandidateError):
+        module._restore_object_columns(frame, columns, allow_axes=False)
+
+
 @pytest.mark.parametrize("custom", [False, True])
 def test_noncanonical_zoneinfo_stays_unavailable_instead_of_changing_timezone_rules(custom):
     timezone = (
@@ -575,6 +630,72 @@ class TestCases(unittest.TestCase):
         Processes(), candidate, tests, libs=("pandas", "matplotlib"), timeout_s=15
     )
     assert result.code == GradeCode.CORRECT and result.score == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "report,success",
+    [
+        ("", False),
+        ("invalid json", True),
+        ('{"passed":true,"cause":"all_pass"}', True),
+        ('{"passed":true,"cause":"all_pass","tests_run":1,"tests_expected":2}', True),
+        ('{"passed":true,"cause":"test_failure","tests_run":1,"tests_expected":1}', True),
+        ('{"passed":true,"cause":"unknown"}', True),
+    ],
+)
+async def test_supervisor_faults_stay_unavailable_without_inference_retries(report, success):
+    from types import SimpleNamespace
+
+    from yugos_evals.scorers.python_unittest import grade_unittest
+
+    class Environment:
+        calls = 0
+
+        def as_type(self, _):
+            raise TypeError
+
+        async def exec(self, *args, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(success=success, returncode=0 if success else 1, stdout=report)
+
+    env = Environment()
+    outcome = await grade_unittest(env, "def task_func(): return 2", TESTS)
+    assert outcome.code.value == "grader_unavailable" and not outcome.settled
+    assert env.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_reference_preflight_requires_passing_gold_and_failing_control():
+    from types import SimpleNamespace
+
+    from yugos_evals.scorers.python_unittest import preflight_unittest
+
+    class Environment:
+        def __init__(self, wrong_passes):
+            self.requests = []
+            self.wrong_passes = wrong_passes
+
+        def as_type(self, _):
+            raise TypeError
+
+        async def exec(self, *args, input, **kwargs):
+            self.requests.append(json.loads(input))
+            passed = len(self.requests) == 1 or self.wrong_passes
+            report = dict(
+                passed=passed,
+                cause="all_pass" if passed else "test_failure",
+                tests_run=1,
+                tests_expected=1,
+            )
+            return SimpleNamespace(success=True, returncode=0, stdout=json.dumps(report))
+
+    for wrong_passes in (False, True):
+        env = Environment(wrong_passes)
+        report = await preflight_unittest(env, "def task_func(): return 2", TESTS)
+        assert report["passed"] is not wrong_passes
+        assert len(env.requests) == 2
+        assert all(r["tests"] == TESTS for r in env.requests)
 
 
 def test_prepared_bigcodebench_uses_supervised_scorer():

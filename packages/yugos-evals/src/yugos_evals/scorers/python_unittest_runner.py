@@ -534,6 +534,36 @@ def _restore_zoneinfo(frame, columns):
     return frame
 
 
+def _restore_object_columns(frame, columns, *, allow_axes):
+    """Restore bounded plain values without asking Arrow to infer mixed cells."""
+    import numpy as np
+    import pandas as pd
+
+    if type(columns) is not tuple or len(columns) > len(frame.columns):
+        raise CandidateError("invalid DataFrame object columns")
+    seen = set()
+    for item in columns:
+        if type(item) is not tuple or len(item) != 2:
+            raise CandidateError("invalid DataFrame object column")
+        column, values = item
+        if (
+            type(column) is not int
+            or not 0 <= column < len(frame.columns)
+            or column in seen
+            or not pd.api.types.is_object_dtype(frame.iloc[:, column].dtype)
+            or type(values) is not tuple
+            or len(values) != len(frame)
+            or len(values) * 8 > MAX_RPC_BYTES
+        ):
+            raise CandidateError("invalid DataFrame object column")
+        seen.add(column)
+        restored = np.empty(len(values), dtype=object)
+        for row, value in enumerate(values):
+            restored[row] = _materialize(value, allow_axes=allow_axes)
+        frame.isetitem(column, restored)
+    return frame
+
+
 def _transfer(value, *, allow_axes=True):
     """Use Arrow for DataFrames and native RPyC references for Matplotlib axes."""
     if isinstance(value, FixtureProxy):
@@ -589,14 +619,36 @@ def _transfer(value, *, allow_axes=True):
         if type(value) is pd.DataFrame:
             try:
                 zones = _zoneinfo_columns(value)
-                table = pa.Table.from_pandas(value, preserve_index=True)
+                positions = tuple(
+                    index
+                    for index, dtype in enumerate(value.dtypes)
+                    if pd.api.types.is_object_dtype(dtype)
+                )
+                if len(value) * len(positions) * 8 > MAX_RPC_BYTES:
+                    raise UnsupportedResult("DataFrame object cells exceed the value limit")
+                object_columns = tuple(
+                    (
+                        index,
+                        tuple(_transfer(v, allow_axes=False) for v in value.iloc[:, index]),
+                    )
+                    for index in positions
+                )
+                portable = value.copy(deep=False)
+                for index, _ in object_columns:
+                    portable.isetitem(index, pd.Series([None] * len(value), dtype=object).array)
+                table = pa.Table.from_pandas(portable, preserve_index=True)
                 sink = pa.BufferOutputStream()
                 with pa.ipc.new_stream(sink, table.schema) as writer:
                     writer.write_table(table)
                 payload = sink.getvalue().to_pybytes()
                 # Reject lossy conversion instead of changing what tests observe.
                 pd.testing.assert_frame_equal(
-                    value, _restore_zoneinfo(_arrow_dataframe(payload), zones)
+                    value,
+                    _restore_object_columns(
+                        _restore_zoneinfo(_arrow_dataframe(payload), zones),
+                        object_columns,
+                        allow_axes=False,
+                    ),
                 )
             except (
                 pa.ArrowException,
@@ -606,11 +658,6 @@ def _transfer(value, *, allow_axes=True):
                 CandidateError,
             ) as exc:
                 raise UnsupportedResult("DataFrame cannot round-trip through Arrow") from exc
-            object_columns = tuple(
-                (index, tuple(_transfer(v, allow_axes=allow_axes) for v in value.iloc[:, index]))
-                for index, dtype in enumerate(value.dtypes)
-                if pd.api.types.is_object_dtype(dtype)
-            )
             return ("dataframe", (payload, object_columns, zones))
     if type(value).__module__.startswith("matplotlib"):
         from matplotlib.axes import Axes
@@ -745,16 +792,7 @@ def _materialize(value, *, allow_axes=True):
         payload, columns = data[:2]
         zones = data[2] if len(data) == 3 else ()
         frame = _restore_zoneinfo(_arrow_dataframe(payload), zones)
-        for column, values in columns:
-            if (
-                type(column) is not int
-                or not 0 <= column < len(frame.columns)
-                or len(values) != len(frame)
-            ):
-                raise CandidateError("invalid DataFrame object column")
-            for row, value in enumerate(values):
-                frame.iat[row, column] = _materialize(value, allow_axes=allow_axes)
-        return frame
+        return _restore_object_columns(frame, columns, allow_axes=False)
     if kind == "axes" and allow_axes:
         from matplotlib.axes import Axes
         from matplotlib.figure import Figure
