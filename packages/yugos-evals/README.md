@@ -163,14 +163,22 @@ default is the official `python:3.12-slim` index; pass
 
 Contributor test instructions are in the [repository development guide](../../README.md#development).
 
-### Grading revisions
+### Grader versions
 
-New MATH, HumanEval, MBPP and SimpleQA packs record `grading_revision: 1`
-in their prepared recipe and a matching task version. This revision uses
-deterministic MATH equivalence, corrected code tests and MBPP test imports,
-and structured SimpleQA answers with an integer precision check. The explicit
-SimpleQA `original` scorer retains its paper grading contract.
+New MATH, HumanEval, MBPP and SimpleQA tool tasks record their benchmark-owned
+`grader_version` in the prepared recipe and task version. Each benchmark can
+advance independently. MATH uses the shared `math_answer_scorer` and bounded
+Math-Verify worker. Units and answer ordering are explicit sample metadata,
+not inferred from question wording. Reviewed sample edits verify their original
+fields and stop preparation if the pinned source data changes.
 
-Frozen recipes without this field use the original native graders. Restoration
-does not alter frozen samples. To adopt corrected prompts, tests or graders,
-prepare a new pack and recalibrate it; retain the previous pack and results.
+The `simpleqa_numeric_scorer` uses a Yugos-specific tool rubric with required
+answer extraction and rationale. Its results are not directly comparable with
+the upstream tool scorer. Numeric checks use the reference's last significant
+digit; unsupported formats retain the judge verdict and record
+`numeric_check: judge_fallback`. The explicit `original` scorer retains the
+paper contract.
+
+Frozen recipes without a grader version use the original native graders.
+Restoration preserves their samples and task version. To adopt updated prompts,
+tests or grading, prepare a new pack and recalibrate it; retain prior results.

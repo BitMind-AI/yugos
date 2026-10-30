@@ -159,10 +159,7 @@ def prepare_task(task: Task, **options):
 
         task.scorer = [bigcodebench_scorer()]
         task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
-    from .corrections import REVISION, TASKS, correct_task
-
-    short_name = name.split("/")[1]
-    correct_task(task, short_name, args)
+    grader_version = _prepare_grading(task, name.split("/")[1], args)
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
@@ -171,10 +168,61 @@ def prepare_task(task: Task, **options):
             "task": name,
             "args": args,
             "fewshot_samples": fewshot_samples,
-            **({"grading_revision": REVISION} if short_name in TASKS else {}),
+            **({"grader_version": grader_version} if grader_version is not None else {}),
         },
         **options,
     )
+
+
+def _grading_components(name: str, args: dict):
+    if name == "math":
+        from .scorers.math import GRADER_VERSION, math_answer_scorer
+
+        return GRADER_VERSION, math_answer_scorer(answer_format="answer_line")
+    if name == "mbpp":
+        from .scorers.mbpp import GRADER_VERSION, mbpp_with_imports
+
+        return GRADER_VERSION, mbpp_with_imports()
+    if name == "humaneval":
+        from .sources._sample_patches import HUMANEVAL_GRADER_VERSION
+
+        return HUMANEVAL_GRADER_VERSION, None
+    if name in {"simpleqa", "simpleqa_verified"} and args.get("scorer", "tool") == "tool":
+        from inspect_evals.simpleqa.grader_templates import (
+            SIMPLEQA_GRADER_TEMPLATE,
+            SIMPLEQA_VERIFIED_GRADER_TEMPLATE,
+        )
+
+        from .scorers.simpleqa import GRADER_VERSION, simpleqa_numeric_scorer
+
+        template = (
+            SIMPLEQA_VERIFIED_GRADER_TEMPLATE
+            if name.endswith("verified")
+            else SIMPLEQA_GRADER_TEMPLATE
+        )
+        return GRADER_VERSION, simpleqa_numeric_scorer(template)
+    return None
+
+
+def _prepare_grading(task: Task, name: str, args: dict):
+    """Select the benchmark-owned grader version and apply reviewed source data once."""
+    components = _grading_components(name, args)
+    if components is None:
+        return None
+    version, scorer = components
+    recorded = (task.metadata or {}).get("grader_version")
+    if recorded == version:
+        return version
+    if recorded is not None:
+        raise ValueError(f"{name}: prepare a fresh task before changing its grader version")
+    from .sources._sample_patches import prepare_samples
+
+    prepare_samples(task, name)
+    if scorer is not None:
+        task.scorer = [scorer]
+    task.metadata = {**(task.metadata or {}), "grader_version": version}
+    task.version = f"{task.version}+yugos-{name}.{version}"
+    return version
 
 
 def _mbpp_template(task: Task) -> str:
@@ -196,13 +244,11 @@ def build(
     task: str,
     args: dict,
     fewshot_samples: list[dict] = (),
-    grading_revision: int = 0,
+    grader_version: int = 0,
 ) -> Task:
     """Build native solvers, agents, tools and scorers without calling source factories."""
     if task not in _MODULES:
         raise ValueError(f"unknown prepared task: {task}")
-    if grading_revision not in (0, 1):
-        raise ValueError(f"unsupported grading revision: {grading_revision}")
     module = importlib.import_module(_MODULES[task])
     name = task.split("/")[1]
     solver, scorer, setup, metrics = generate(), None, None, None
@@ -446,8 +492,9 @@ def build(
         scorer = module.math_answer_scorer()
     if metrics is not None:
         options = {**options, "metrics": metrics}
-    if grading_revision:
-        from .corrections import corrected_scorer
-
-        scorer = corrected_scorer(name, args) or scorer
+    if grader_version:
+        components = _grading_components(name, args)
+        if components is None or components[0] != grader_version:
+            raise ValueError(f"unsupported {name} grader version: {grader_version}")
+        scorer = components[1] or scorer
     return Task(**options, solver=solver, scorer=scorer, setup=setup)

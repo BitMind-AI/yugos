@@ -255,7 +255,7 @@ CATALOG: tuple[BenchmarkEntry, ...] = (
     _upstream(
         "math",
         "math_code",
-        scorer="math_equivalence",
+        scorer="math_answer_scorer",
         notes=(
             "All levels and subjects, zero-shot. Deterministic answer equivalence; no model judge."
         ),
@@ -490,8 +490,8 @@ def load_task(benchmark: BenchmarkEntry, **args: Any) -> Task:
     if factory is None:
         raise ValueError(f"{benchmark.task} is not installed")
     task = pin_roles(factory(**{**benchmark.args, **args}), benchmark)
-    from .corrections import correct_task
+    from .prepared import _prepare_grading
 
-    correct_task(task, benchmark.task.split("/")[1], {**benchmark.args, **args})
+    _prepare_grading(task, benchmark.task.split("/")[1], {**benchmark.args, **args})
     task.dataset = with_sample_ids(task.dataset)
     return task

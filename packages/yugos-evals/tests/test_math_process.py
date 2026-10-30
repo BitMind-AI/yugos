@@ -4,6 +4,7 @@ import math
 import os
 import sys
 import time
+from functools import partial
 from pathlib import Path
 
 import anyio
@@ -14,7 +15,6 @@ from inspect_ai.scorer import Target
 from yugos.evaluation.grades import GradeCode
 from yugos_evals.scorers import _math_process
 from yugos_evals.scorers.math import grade_math, math_answer_scorer, reference_exclusion
-from yugos_evals.scorers.math_equivalence import math_equivalence
 
 
 @pytest.fixture
@@ -26,7 +26,11 @@ def worker_fixture(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "factory,response", [(math_answer_scorer, "stall"), (math_equivalence, "ANSWER: stall")]
+    "factory,response",
+    [
+        (math_answer_scorer, "stall"),
+        (partial(math_answer_scorer, answer_format="answer_line"), "ANSWER: stall"),
+    ],
 )
 def test_timeout_is_unscored_and_reaps_even_a_worker_ignoring_termination(
     tmp_path, worker_fixture, factory, response

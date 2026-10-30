@@ -27,13 +27,11 @@ def main():
         from ._math_compare import grade_math, reference_exclusion
 
         if request["operation"] == "grade":
-            result = asdict(grade_math(request["gold"], request["text"]))
+            result = asdict(
+                grade_math(request["gold"], request["text"], **request.get("options", {}))
+            )
         elif request["operation"] == "reference":
             result = reference_exclusion(request["gold"])
-        elif request["operation"] == "equivalence":
-            from .math_equivalence import _equivalent
-
-            result = _equivalent(request["gold"], request["text"], request["problem"])
         else:
             raise ValueError("unknown math operation")
     json.dump(result, sys.stdout)

@@ -275,7 +275,8 @@ def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
         "inspect_evals.math.utils.get_model",
         lambda *args, **kwargs: pytest.fail("MATH grading called a model"),
     )
-    [(prepared, _)] = restore_tasks(questions)
+    [(prepared, definition)] = restore_tasks(questions)
+    assert native.version == definition.version == prepared.version
 
     def scorer_names(task):
         names: list[str] = []
@@ -283,16 +284,16 @@ def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
             names.append(unique_scorer_name(scorer, names))
         return names
 
-    assert scorer_names(native) == ["math_equivalence"]
-    assert scorer_names(prepared) == ["math_equivalence"]
-    assert questions[0].inspect_task["builder_args"]["grading_revision"] == 1
+    assert scorer_names(native) == ["math_answer_scorer"]
+    assert scorer_names(prepared) == ["math_answer_scorer"]
+    assert questions[0].inspect_task["builder_args"]["grader_version"] == 1
     for label, task in (("native", native), ("prepared", prepared)):
         miner = ScriptedRouter("ANSWER: 2")
         log = run(task, miner, tmp_path / label)
         assert log.status == "success"
         [sample] = log.samples
-        assert list(sample.scores) == ["math_equivalence"]
-        assert sample.scores["math_equivalence"].value == 1.0
+        assert list(sample.scores) == ["math_answer_scorer"]
+        assert sample.scores["math_answer_scorer"].value == 1.0
         assert len(miner.calls) == 1
         assert "Look at the following two expressions" not in miner.seen()
 

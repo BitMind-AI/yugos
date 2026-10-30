@@ -16,13 +16,13 @@ class MathWorkerFailed(Exception):
         super().__init__(cause)
 
 
-def compare(operation: str, gold: str, text: str = "", *, problem: str = ""):
+def compare(operation: str, gold: str, text: str = "", **options):
     """Reap a slow or crashed worker; never turn its missing answer into a zero."""
     try:
         result = subprocess.run(
             [sys.executable, "-m", WORKER_MODULE],
             input=json.dumps(
-                {"operation": operation, "gold": gold, "text": text, "problem": problem}
+                {"operation": operation, "gold": gold, "text": text, "options": options}
             ),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -43,9 +43,6 @@ def compare(operation: str, gold: str, text: str = "", *, problem: str = ""):
                 raise ValueError
         elif operation == "reference":
             if value is not None and not isinstance(value, str):
-                raise ValueError
-        elif operation == "equivalence":
-            if not isinstance(value, bool):
                 raise ValueError
         else:
             raise ValueError

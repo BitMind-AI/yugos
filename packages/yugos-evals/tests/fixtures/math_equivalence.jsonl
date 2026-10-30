@@ -10,7 +10,7 @@
 {"id": "auto:math:math_77cf59d7", "problem": "Compute the answer.", "target": "1200_7", "answer": "\\(1200_7\\)"}
 {"id": "auto:math:math_9249f218", "problem": "Compute the answer.", "target": "\\frac78", "answer": "\\(\\frac{7}{8}\\)"}
 {"id": "auto:math:math_9528aad2", "problem": "Compute the answer.", "target": "\\frac{21}{2}\\pi", "answer": "$\\frac{21\\pi}{2}$"}
-{"id": "auto:math:math_98fed519", "problem": "Enter the other three roots, separated by commas.", "target": "1,-1,-3i", "answer": "-3i, 1, -1"}
+{"id": "auto:math:math_98fed519", "problem": "Enter the other three roots, separated by commas.", "target": "1,-1,-3i", "answer": "-3i, 1, -1", "metadata": {"math_answer_order": "unordered"}}
 {"id": "auto:math:math_9f1afbe7", "problem": "Compute the answer.", "target": "\\frac{2}{3}", "answer": "\\(\\frac{2}{3}\\)"}
 {"id": "auto:math:math_a06c286b", "problem": "Compute the answer.", "target": "3 + 2 \\sqrt{2}", "answer": "\\(3+2\\sqrt{2}\\)"}
 {"id": "auto:math:math_ae626664", "problem": "Compute the answer.", "target": "\\text{A,D}", "answer": "A,D"}
@@ -33,11 +33,11 @@
 {"id": "jev:math:math_68e4d0b7", "problem": "Compute the answer.", "target": "371,\\!043,\\!400", "answer": "371043400"}
 {"id": "jev:math:math_741b6391", "problem": "Compute the answer.", "target": "\\text{Sunday}", "answer": "Sunday"}
 {"id": "jev:math:math_9528aad2", "problem": "Compute the answer.", "target": "\\frac{21}{2}\\pi", "answer": "\\frac{21\\pi}{2}"}
-{"id": "jev:math:math_98fed519", "problem": "Enter the other three roots, separated by commas.", "target": "1,-1,-3i", "answer": "\\(1, -1, -3i\\)"}
+{"id": "jev:math:math_98fed519", "problem": "Enter the other three roots, separated by commas.", "target": "1,-1,-3i", "answer": "\\(1, -1, -3i\\)", "metadata": {"math_answer_order": "unordered"}}
 {"id": "jev:math:math_ae626664", "problem": "Compute the answer.", "target": "\\text{A,D}", "answer": "A, D"}
-{"id": "jev:math:math_b2cca4da", "problem": "A bicycle is traveling at 20 feet per minute. What is its speed expressed in inches per second?", "target": "4", "answer": "4 inches per second"}
+{"id": "jev:math:math_b2cca4da", "problem": "A bicycle is traveling at 20 feet per minute. What is its speed expressed in inches per second?", "target": "4", "answer": "4 inches per second", "metadata": {"math_answer_units": "inches per second"}}
 {"id": "jev:math:math_c32c2603", "problem": "Compute the answer.", "target": "10", "answer": "\\(10\\)"}
-{"id": "jev:math:math_cb449b2b", "problem": "How many steps must Max take to walk down the same hall?", "target": "100", "answer": "100 steps"}
+{"id": "jev:math:math_cb449b2b", "problem": "How many steps must Max take to walk down the same hall?", "target": "100", "answer": "100 steps", "metadata": {"math_answer_units": "steps"}}
 {"id": "jev:math:math_cf4e66fb", "problem": "Compute the answer.", "target": "\\frac{1}{5}", "answer": "\\(\\frac{1}{5}\\)"}
 {"id": "jev:math:math_e5b7f870", "problem": "Compute the answer.", "target": "\\text{parabola}", "answer": "parabola"}
 {"id": "jev:math:math_fdf4e77b", "problem": "Compute the answer.", "target": "27^\\circ, 63^\\circ, 99^\\circ, 135^\\circ, 171^\\circ", "answer": "\\(27^\\circ, 63^\\circ, 99^\\circ, 135^\\circ, 171^\\circ\\)"}

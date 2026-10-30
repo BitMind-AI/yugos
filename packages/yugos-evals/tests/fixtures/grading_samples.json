@@ -1,0 +1,106 @@
+[
+  {
+    "task": "humaneval",
+    "sample": {
+      "id": "HumanEval/125",
+      "input": "\nRead the following function signature and docstring, and fully implement\nthe function described. Your response should only contain the code for\nthis function.\n\n\ndef split_words(txt):\n    '''\n    Given a string of words, return a list of words split on whitespace, if no whitespaces exists in the text you\n    should split on commas ',' if no commas exists you should return the number of lower-case letters with odd order in the\n    alphabet, ord('a') = 0, ord('b') = 1, ... ord('z') = 25\n    Examples\n    split_words(\"Hello world!\") \u279e [\"Hello\", \"world!\"]\n    split_words(\"Hello,world!\") \u279e [\"Hello\", \"world!\"]\n    split_words(\"abcdef\") == 3 \n    '''\n",
+      "target": "    if \" \" in txt:\n        return txt.split()\n    elif \",\" in txt:\n        return txt.replace(',',' ').split()\n    else:\n        return len([i for i in txt if i.islower() and ord(i)%2 == 0])\n",
+      "metadata": {
+        "entry_point": "split_words",
+        "prompt": "\ndef split_words(txt):\n    '''\n    Given a string of words, return a list of words split on whitespace, if no whitespaces exists in the text you\n    should split on commas ',' if no commas exists you should return the number of lower-case letters with odd order in the\n    alphabet, ord('a') = 0, ord('b') = 1, ... ord('z') = 25\n    Examples\n    split_words(\"Hello world!\") \u279e [\"Hello\", \"world!\"]\n    split_words(\"Hello,world!\") \u279e [\"Hello\", \"world!\"]\n    split_words(\"abcdef\") == 3 \n    '''\n",
+        "test": "def check(candidate):\n\n    assert candidate(\"Hello world!\") == [\"Hello\",\"world!\"]\n    assert candidate(\"Hello,world!\") == [\"Hello\",\"world!\"]\n    assert candidate(\"Hello world,!\") == [\"Hello\",\"world,!\"]\n    assert candidate(\"Hello,Hello,world !\") == [\"Hello,Hello,world\",\"!\"]\n    assert candidate(\"abcdef\") == 3\n    assert candidate(\"aaabb\") == 2\n    assert candidate(\"aaaBb\") == 1\n    assert candidate(\"\") == 0\n"
+      }
+    }
+  },
+  {
+    "task": "mbpp",
+    "sample": {
+      "id": "143",
+      "input": "Write a function to find number of lists present in the given tuple.",
+      "target": [
+        "assert find_lists(([1, 2, 3, 4], [5, 6, 7, 8])) == 2",
+        "assert find_lists(([1, 2], [3, 4], [5, 6]))  == 3",
+        "assert find_lists(([9, 8, 7, 6, 5, 4, 3, 2, 1])) == 1"
+      ],
+      "metadata": {
+        "code": "def find_lists(Input): \n\tif isinstance(Input, list): \n\t\treturn 1\n\telse: \n\t\treturn len(Input) ",
+        "prompt": "Write a function to find number of lists present in the given tuple.",
+        "source_file": "Mike's Copy of Benchmark Questions Verification V2.ipynb",
+        "task_id": 143,
+        "test_imports": [],
+        "test_list": [
+          "assert find_lists(([1, 2, 3, 4], [5, 6, 7, 8])) == 2",
+          "assert find_lists(([1, 2], [3, 4], [5, 6]))  == 3",
+          "assert find_lists(([9, 8, 7, 6, 5, 4, 3, 2, 1])) == 1"
+        ],
+        "test_list_str": "assert find_lists(([1, 2, 3, 4], [5, 6, 7, 8])) == 2\nassert find_lists(([1, 2], [3, 4], [5, 6]))  == 3\nassert find_lists(([9, 8, 7, 6, 5, 4, 3, 2, 1])) == 1"
+      }
+    }
+  },
+  {
+    "task": "mbpp",
+    "sample": {
+      "id": "248",
+      "input": "Write a function that takes in an integer n and calculates the harmonic sum of n-1.",
+      "target": [
+        "assert math.isclose(harmonic_sum(7), 2.5928571428571425, rel_tol=0.001)",
+        "assert math.isclose(harmonic_sum(4), 2.083333333333333, rel_tol=0.001)",
+        "assert math.isclose(harmonic_sum(19), 3.547739657143682, rel_tol=0.001)"
+      ],
+      "metadata": {
+        "code": "def harmonic_sum(n):\n  if n < 2:\n    return 1\n  else:\n    return 1 / n + (harmonic_sum(n - 1)) ",
+        "prompt": "Write a function that takes in an integer n and calculates the harmonic sum of n-1.",
+        "source_file": "Benchmark Questions Verification V2.ipynb",
+        "task_id": 248,
+        "test_imports": [
+          "import math"
+        ],
+        "test_list": [
+          "assert math.isclose(harmonic_sum(7), 2.5928571428571425, rel_tol=0.001)",
+          "assert math.isclose(harmonic_sum(4), 2.083333333333333, rel_tol=0.001)",
+          "assert math.isclose(harmonic_sum(19), 3.547739657143682, rel_tol=0.001)"
+        ],
+        "test_list_str": "assert math.isclose(harmonic_sum(7), 2.5928571428571425, rel_tol=0.001)\nassert math.isclose(harmonic_sum(4), 2.083333333333333, rel_tol=0.001)\nassert math.isclose(harmonic_sum(19), 3.547739657143682, rel_tol=0.001)"
+      }
+    }
+  },
+  {
+    "task": "math",
+    "sample": {
+      "id": "math_98fed519",
+      "input": "One of the roots of\n\\[z^4 + az^3 + 5z^2 - iz - 6 = 0\\]is $2i,$ where $a$ is a complex number.  Enter the other three roots, separated by commas.",
+      "target": "1,-1,-3i",
+      "metadata": {
+        "level": "5",
+        "solution": "Since $2i$ is a root,\n\\[(2i)^4 + a(2i)^3 + 5(2i)^2 - i(2i) - 6 = 0.\\]Solving, we find $a = i,$ so the polynomial is\n\\[z^4 + iz^3 + 5z^2 - iz - 6 = 0.\\]We can take out a factor of $z - 2i,$ to get\n\\[(z - 2i)(z^3 + 3iz^2 - z - 3i) = 0.\\]We can check that $z = 1$ and $z = -1$ are solutions of the cubic, so we can take out factors of $z - 1$ and $z + 1,$ to get\n\\[(z - 2i)(z - 1)(z + 1)(z + 3i) = 0.\\]Therefore, the other roots are $\\boxed{1,-1,-3i}.$",
+        "subject": "intermediate algebra"
+      }
+    }
+  },
+  {
+    "task": "math",
+    "sample": {
+      "id": "math_b2cca4da",
+      "input": "A bicycle is traveling at 20 feet per minute. What is the bicycle's speed expressed in inches per second?",
+      "target": "4",
+      "metadata": {
+        "level": "4",
+        "solution": "There are $12$ inches in a foot, so the bicycle is traveling at $12(20)=240$ inches per minute.  There are $60$ seconds in a minute, so the bicycle is traveling at $\\frac{240}{60}=\\boxed{4}$ inches per second.",
+        "subject": "prealgebra"
+      }
+    }
+  },
+  {
+    "task": "math",
+    "sample": {
+      "id": "math_cb449b2b",
+      "input": "Max must take 10 steps to go the same distance as three of his dad's steps. His dad takes 30 steps to walk down the hall. How many steps must Max take to walk down the same hall?",
+      "target": "100",
+      "metadata": {
+        "level": "3",
+        "solution": "Using the given information, we have the ratio $10 \\text{ Max steps} : 3 \\text{ Dad steps}$. Multiplying both sides by $10$, we get the ratio $100 \\text{ Max steps} : 30 \\text{ Dad steps}$. Thus, $30$ of his dad's steps are the same as $\\boxed{100}$ of his steps.",
+        "subject": "prealgebra"
+      }
+    }
+  }
+]
