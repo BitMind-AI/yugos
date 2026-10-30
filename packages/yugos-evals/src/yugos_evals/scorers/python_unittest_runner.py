@@ -250,9 +250,31 @@ class CandidateConnection(Connection):
         return value
 
 
+def _urllib3_error_fields(error_type):
+    """Describe constructors only for exact exception types already loaded."""
+    module = sys.modules.get("urllib3.exceptions")
+    fields = {
+        "MaxRetryError": ("pool", "url", "reason"),
+        "NameResolutionError": ("_host", "conn", "_reason"),
+        "NewConnectionError": ("conn", "_message"),
+    }
+    for name, names in fields.items():
+        if module is not None and error_type is getattr(module, name, None):
+            return names
+    return ()
+
+
 def _exception_record(error):
     from urllib.error import HTTPError
 
+    fields = _urllib3_error_fields(type(error))
+    if fields:
+        return (
+            type(error).__module__,
+            type(error).__qualname__,
+            _transfer(tuple(getattr(error, field) for field in fields)),
+            _transfer(error.args),
+        )
     args = (
         (error.msg, error.doc, error.pos)
         if isinstance(error, json.JSONDecodeError)
@@ -264,7 +286,11 @@ def _exception_record(error):
 
 
 def _make_exception(record, *, candidate=False):
-    module_name, name, args = record
+    if type(record) is not tuple or len(record) not in (3, 4):
+        raise CandidateError("invalid exception record")
+    module_name, name, args = record[:3]
+    if type(module_name) is not str or type(name) is not str:
+        raise CandidateError("invalid exception type")
     module = importlib.import_module(module_name) if candidate else sys.modules.get(module_name)
     error_type = module
     for part in name.split("."):
@@ -273,8 +299,19 @@ def _make_exception(record, *, candidate=False):
         error_type = getattr(error_type, part, None)
     if not isinstance(error_type, type) or not issubclass(error_type, Exception):
         raise CandidateError("unavailable exception type")
-    values = _materialize(args, allow_axes=False)
-    return error_type(*values)
+    fields = _urllib3_error_fields(error_type)
+    if len(record) == 4 and not fields:
+        raise CandidateError("unavailable exception constructor")
+    # These exact trusted constructors retain candidate-owned pool/connection
+    # references. Generic exception arguments still reject live references.
+    values = _materialize(args, allow_axes=bool(fields))
+    restored = error_type(*values)
+    if len(record) == 4:
+        original_args = _materialize(record[3], allow_axes=False)
+        if type(original_args) is not tuple:
+            raise CandidateError("invalid original exception arguments")
+        restored.args = original_args
+    return restored
 
 
 def _raise_exception(record, *, candidate=False):

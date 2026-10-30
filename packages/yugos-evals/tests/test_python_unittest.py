@@ -526,6 +526,92 @@ class TestCases(unittest.TestCase):
     assert report["passed"] and report["cause"] == "all_pass"
 
 
+@pytest.mark.parametrize("correct", [True, False])
+def test_nested_connection_errors_preserve_constructor_fields_and_original_message(correct):
+    candidate = (
+        """
+import socket
+import requests
+from urllib3.connection import HTTPSConnection
+from urllib3.connectionpool import HTTPSConnectionPool
+from urllib3.exceptions import MaxRetryError, NameResolutionError
+def task_func():
+    pool = HTTPSConnectionPool('fixture.example')
+    connection = HTTPSConnection('fixture.example')
+    reason = NameResolutionError('fixture.example', connection, socket.gaierror(-2, 'missing fixture'))
+    error = MaxRetryError(pool, '/archive.zip', reason)
+    error.args = ('original connection message',)
+    raise requests.ConnectionError(error)
+"""
+        if correct
+        else "def task_func(): raise ValueError('wrong exception')"
+    )
+    tests = """
+import unittest
+import requests
+from urllib3.exceptions import MaxRetryError, NameResolutionError
+class TestCases(unittest.TestCase):
+    def test_exception(self):
+        with self.assertRaises(requests.ConnectionError) as caught:
+            task_func()
+        error = caught.exception.args[0]
+        self.assertIs(type(error), MaxRetryError)
+        self.assertEqual(error.url, '/archive.zip')
+        self.assertEqual(error.pool.host, 'fixture.example')
+        self.assertEqual(str(error), 'original connection message')
+        self.assertIs(type(error.reason), NameResolutionError)
+        self.assertEqual(error.reason._host, 'fixture.example')
+        self.assertEqual(error.reason.conn.host, 'fixture.example')
+        self.assertEqual(error.reason._reason.errno, -2)
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+def test_provided_connection_errors_keep_their_fields_when_caught_in_the_candidate():
+    candidate = """
+from urllib3.exceptions import NewConnectionError
+def task_func(provided):
+    try:
+        provided()
+    except NewConnectionError as error:
+        return error.conn.host, error._message, str(error)
+"""
+    tests = """
+import unittest
+from urllib3.connection import HTTPSConnection
+from urllib3.exceptions import NewConnectionError
+class TestCases(unittest.TestCase):
+    def test_exception(self):
+        error = NewConnectionError(HTTPSConnection('fixture.example'), 'connection refused')
+        error.args = ('original fixture message',)
+        def provided(): raise error
+        self.assertEqual(task_func(provided), ('fixture.example', 'connection refused', 'original fixture message'))
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_exception_constructor_references_remain_restricted_to_exact_known_types():
+    from urllib3.exceptions import MaxRetryError
+
+    spec = importlib.util.spec_from_file_location("exception_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class CustomRetryError(MaxRetryError):
+        pass
+
+    assert module._urllib3_error_fields(CustomRetryError) == ()
+    with pytest.raises(module.CandidateError):
+        module._make_exception(("builtins", "ValueError", ("tuple", (("reference", object()),))))
+    with pytest.raises(module.CandidateError):
+        module._make_exception(("builtins", "ValueError", ("tuple", ()), ("tuple", ())))
+    with pytest.raises(module.CandidateError):
+        module._make_exception(("untrusted_missing_module", "MaxRetryError", ("tuple", ())))
+
+
 def test_model_import_aliases_cannot_replace_trusted_test_helpers():
     candidate = "from os import _exit as helper\ndef task_func(): return 3"
     report = _run(candidate, reference="import math as helper")
