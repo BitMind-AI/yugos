@@ -199,6 +199,32 @@ def test_test_output_does_not_corrupt_the_supervisor_report():
     assert report["passed"]
 
 
+@pytest.mark.parametrize("kind", ["axes", "figure"])
+def test_plot_return_types_resolve_without_library_hints(kind, matplotlib_cache, monkeypatch):
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
+    monkeypatch.setenv("MPLBACKEND", "Agg")
+    candidate = f"""
+import matplotlib.pyplot as plt
+def task_func():
+    figure, axes = plt.subplots()
+    axes.set_title('example')
+    return {"axes" if kind == "axes" else "figure"}
+"""
+    tests = f"""
+import unittest
+class TestCases(unittest.TestCase):
+    def test_plot(self):
+        result = task_func()
+        from matplotlib.axes import Axes
+        from matplotlib.figure import Figure
+        self.assertIsInstance(result, {"Axes" if kind == "axes" else "Figure"})
+        axes = {"result" if kind == "axes" else "result.axes[0]"}
+        self.assertEqual(axes.get_title(), 'example')
+"""
+    report = _run(candidate, tests=tests, timeout_s=15)
+    assert report == {"passed": True, "cause": "all_pass", "tests_run": 1, "tests_expected": 1}
+
+
 def test_offline_http_snapshot_keeps_nested_test_mocks():
     import base64
     import hashlib

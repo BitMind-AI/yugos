@@ -124,6 +124,14 @@ class SupervisorConnection(Connection):
         return boxed
 
     def _unbox(self, package):
+        if package[0] == consts.LABEL_REMOTE_REF and package[1][0].startswith(
+            ("matplotlib.axes.", "matplotlib.figure.")
+        ):
+            # RPyC resolves proxy classes from already imported trusted modules.
+            # Load these before creating a plot proxy, including when the task's
+            # optional library hints do not mention Matplotlib.
+            importlib.import_module("matplotlib.axes")
+            importlib.import_module("matplotlib.figure")
         value = super()._unbox(package)
         if package[0] == consts.LABEL_LOCAL_REF and id(value) not in self.fixtures.identities:
             raise CandidateError("unregistered fixture reference")
