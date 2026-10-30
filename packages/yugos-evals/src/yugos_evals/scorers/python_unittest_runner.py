@@ -13,6 +13,7 @@ import io
 import json
 import math
 import os
+import pathlib
 import socket
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from contextlib import ExitStack, redirect_stdout
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from decimal import Decimal
+from subprocess import Popen as _transport_popen
 
 import pyarrow as pa
 import rpyc
@@ -34,6 +36,11 @@ from rpyc.core.stream import SocketStream
 
 MAX_RPC_BYTES = 16_000_000
 MAX_RSA_BYTES = 16_384
+MAX_POINT_BYTES = 64
+PATH_TYPES = {
+    name: getattr(pathlib, name)
+    for name in ("PosixPath", "WindowsPath", "PurePosixPath", "PureWindowsPath")
+}
 FIXTURE_CALL = 101
 _fixture_registry = None
 _fixture_connection = None
@@ -676,6 +683,8 @@ def _transfer(value, *, allow_axes=True):
     """Use Arrow for DataFrames and native RPyC references for Matplotlib axes."""
     if isinstance(value, FixtureProxy):
         return ("fixture", value.identity)
+    if type(value) in PATH_TYPES.values():
+        return ("pathlib_path", (type(value).__name__, str(value)))
     if isinstance(value, Exception):
         return ("exception", _exception_record(value))
     if _fixture_registry is not None:
@@ -694,7 +703,22 @@ def _transfer(value, *, allow_axes=True):
     from types import FunctionType
 
     if _fixture_registry is not None and type(value) is FunctionType:
-        return ("fixture", (_fixture_registry.register(value), "types", "FunctionType"))
+        return (
+            "fixture",
+            (_fixture_registry.register(value, method=True), "types", "FunctionType"),
+        )
+    if type(value).__module__.startswith("shapely"):
+        from shapely import wkb
+        from shapely.geometry import Point
+
+        if type(value) is Point:
+            payload = wkb.dumps(value, include_srid=True)
+            if len(payload) > MAX_POINT_BYTES:
+                raise UnsupportedResult("Point exceeds the value limit")
+            restored = wkb.loads(payload)
+            if type(restored) is not Point or wkb.dumps(restored, include_srid=True) != payload:
+                raise UnsupportedResult("Point cannot round-trip through WKB")
+            return ("shapely_point", payload)
     if type(value).__module__.startswith("numpy"):
         import numpy as np
 
@@ -845,6 +869,30 @@ def _materialize(value, *, allow_axes=True):
             except (ImportError, AttributeError):
                 fixture_type = None
         return FixtureProxy(identity, fixture_type)
+    if kind == "pathlib_path":
+        if (
+            type(data) is not tuple
+            or len(data) != 2
+            or type(data[0]) is not str
+            or data[0] not in PATH_TYPES
+            or type(data[1]) is not str
+            or len(data[1].encode("utf-8")) > MAX_RPC_BYTES
+        ):
+            raise CandidateError("invalid path descriptor")
+        try:
+            return PATH_TYPES[data[0]](data[1])
+        except (TypeError, ValueError, NotImplementedError) as error:
+            raise CandidateError("path cannot be restored on this platform") from error
+    if kind == "shapely_point":
+        if type(data) is not bytes or not 0 < len(data) <= MAX_POINT_BYTES:
+            raise CandidateError("invalid Point payload")
+        from shapely import wkb
+        from shapely.geometry import Point
+
+        restored = wkb.loads(data)
+        if type(restored) is not Point or wkb.dumps(restored, include_srid=True) != data:
+            raise CandidateError("payload is not a lossless Point")
+        return restored
     if kind == "rsa_private_key":
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
@@ -1178,7 +1226,7 @@ def run(request):
         parent, child = _transport_socketpair()
         # Only submitted code and the socket enter this fresh interpreter;
         # it inherits neither the supervisor's test data nor its call stack.
-        process = subprocess.Popen(
+        process = _transport_popen(
             [
                 sys.executable,
                 "-I",

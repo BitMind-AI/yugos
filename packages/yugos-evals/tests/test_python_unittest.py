@@ -25,6 +25,142 @@ TESTS = (
 
 
 @pytest.mark.parametrize("correct", [True, False])
+def test_native_paths_work_as_inputs_and_preserve_their_result_type(correct):
+    candidate = (
+        "def task_func(path):\n path.write_text('updated')\n return path.with_suffix('.done')"
+        if correct
+        else "def task_func(path): return 'wrong path'"
+    )
+    tests = """
+import unittest
+import tempfile
+from pathlib import Path
+class TestCases(unittest.TestCase):
+    def test_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'input.txt'
+            result = task_func(path)
+            self.assertEqual(path.read_text(), 'updated')
+            self.assertIsInstance(result, Path)
+            self.assertEqual(result, path.with_suffix('.done'))
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_provided_plain_function_fixtures_are_callable(correct):
+    candidate = (
+        "def task_func(provided): return provided(3)"
+        if correct
+        else "def task_func(provided): return 0"
+    )
+    tests = """
+import unittest
+class TestCases(unittest.TestCase):
+    def test_provided_function(self):
+        def provided(value): return 7 * value
+        self.assertEqual(task_func(provided), 21)
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_popen_test_patch_does_not_intercept_the_grader_worker_launch(correct):
+    candidate = (
+        "import subprocess\ndef task_func(): return subprocess.Popen(['script'], stdout=subprocess.PIPE).communicate()[0]"
+        if correct
+        else "def task_func(): return b'wrong'"
+    )
+    tests = """
+import unittest
+import subprocess
+from unittest.mock import patch, Mock
+class TestCases(unittest.TestCase):
+    @patch('subprocess.Popen')
+    def test_script(self, launch):
+        child = Mock()
+        child.communicate.return_value = (b'expected', b'')
+        launch.return_value = child
+        self.assertEqual(task_func(), b'expected')
+        launch.assert_called_once_with(['script'], stdout=subprocess.PIPE)
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
+def test_point_cells_in_series_cross_provided_function_calls(correct):
+    candidate = (
+        """
+import pandas as pd
+from shapely.geometry import Point
+def task_func(project): return project(pd.Series([Point(1, 2)], dtype=object)).iloc[0]
+"""
+        if correct
+        else "def task_func(project): return None"
+    )
+    tests = """
+import unittest
+from shapely.geometry import Point
+class TestCases(unittest.TestCase):
+    def test_point(self):
+        def project(series):
+            return series.map(lambda point: Point(point.x + 3, point.y + 5))
+        point = task_func(project)
+        self.assertIsInstance(point, Point)
+        self.assertEqual(tuple(point.coords), ((4.0, 7.0),))
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+def test_point_transport_keeps_z_coordinates_and_srid_and_rejects_other_geometries():
+    import shapely
+    from shapely import wkb
+    from shapely.geometry import LineString, Point
+
+    spec = importlib.util.spec_from_file_location("point_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    original = shapely.set_srid(Point(1, 2, 3), 4326)
+    restored = module._materialize(module._transfer(original))
+    assert tuple(restored.coords) == tuple(original.coords)
+    assert shapely.get_srid(restored) == 4326
+    with pytest.raises(module.CandidateError):
+        module._materialize(("shapely_point", "not bytes"))
+    with pytest.raises(module.CandidateError):
+        module._materialize(("shapely_point", b"x" * (module.MAX_POINT_BYTES + 1)))
+    with pytest.raises(module.CandidateError):
+        module._materialize(("shapely_point", wkb.dumps(LineString([(0, 0), (1, 1)]))))
+
+
+def test_path_descriptors_cannot_select_custom_constructors_or_pathlike_callbacks():
+    spec = importlib.util.spec_from_file_location("path_transport_fixture", RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for descriptor in (("CustomPath", "/tmp/file"), ("PosixPath", 7), ["PosixPath", "/tmp/file"]):
+        with pytest.raises(module.CandidateError):
+            module._materialize(("pathlib_path", descriptor))
+
+    class CustomPath:
+        def __fspath__(self):
+            pytest.fail("a custom path callback must not run in the test supervisor")
+
+        def __str__(self):
+            pytest.fail("custom string conversion must not run in the test supervisor")
+
+    original = CustomPath()
+    encoded = module._transfer(original)
+    assert encoded == ("reference", original)
+
+
+@pytest.mark.parametrize("correct", [True, False])
 def test_plot_methods_receive_native_array_arguments(correct, matplotlib_cache, monkeypatch):
     monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
     monkeypatch.setenv("MPLBACKEND", "Agg")
