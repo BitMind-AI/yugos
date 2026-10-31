@@ -27,7 +27,6 @@ from datetime import time as datetime_time
 from decimal import Decimal
 from subprocess import Popen as _transport_popen
 
-import pyarrow as pa
 import rpyc
 from rpyc.core import consts
 from rpyc.core.channel import Channel
@@ -604,6 +603,8 @@ class FixtureRegistry:
 
 
 def _has_extension(dtype):
+    import pyarrow as pa
+
     if isinstance(dtype, pa.ExtensionType):
         return True
     if pa.types.is_dictionary(dtype):
@@ -612,6 +613,8 @@ def _has_extension(dtype):
 
 
 def _arrow_dataframe(payload):
+    import pyarrow as pa
+
     if type(payload) is not bytes or len(payload) > MAX_RPC_BYTES:
         raise UnsupportedResult("invalid Arrow payload")
     with pa.ipc.open_stream(pa.BufferReader(payload)) as reader:
@@ -776,6 +779,7 @@ def _transfer(value, *, allow_axes=True):
             return ("numpy_scalar" if isinstance(value, np.generic) else "numpy", payload)
     if type(value).__module__.startswith("pandas"):
         import pandas as pd
+        import pyarrow as pa
 
         if isinstance(value, pd.Timestamp):
             return ("pandas_timestamp", value.isoformat())
@@ -1089,7 +1093,7 @@ def _apply_test_imports(namespace, bindings):
                 module if alias else importlib.import_module(module_name.split(".")[0])
             )
         elif kind == "from":
-            namespace[alias] = getattr(module, name)
+            namespace[alias] = getattr(__import__(module_name, fromlist=[name]), name)
         else:
             raise CandidateError("invalid test import binding")
 
@@ -1290,6 +1294,21 @@ def _offline_http(stack, fixtures):
     stack.enter_context(patch("requests.sessions.Session.request", side_effect=request))
 
 
+def _reap_child(conn, process):
+    """Reap before closing RPC so a candidate cannot prolong close acknowledgement."""
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1)
+    try:
+        conn.close()
+    except (EOFError, OSError, TimeoutError, CandidateError):
+        pass
+
+
 def run(request):
     """Evaluate trusted unittest assertions against isolated candidate calls."""
     global _fixture_registry
@@ -1360,6 +1379,25 @@ def run(request):
             module = sys.modules.get("django.conf")
             configured = bool(module is not None and module.settings.configured)
             conn.root.configure(fixtures.manifest(), configured)
+
+        # Copied values need no owner process. Escaping proxies keep theirs;
+        # the newest worker also stays available for subsequent pyplot queries.
+        for previous_conn, previous_process in tuple(children):
+            if previous_conn is last_connection:
+                continue
+            try:
+                proxies = [
+                    previous_conn._proxy_cache.get(key)
+                    for key in tuple(previous_conn._proxy_cache.keys())
+                ]
+            except (KeyError, RuntimeError):
+                continue
+            if any(
+                proxy is not None and proxy is not previous_conn._remote_root for proxy in proxies
+            ):
+                continue
+            _reap_child(previous_conn, previous_process)
+            children.remove((previous_conn, previous_process))
 
         conn.prepare_callback = prepare_call
         try:
@@ -1478,19 +1516,7 @@ def run(request):
         fixtures.close()
         _fixture_registry = None
         for conn, process in children:
-            # Reap before protocol close: an uncooperative candidate must not
-            # prolong cleanup by withholding RPyC's close acknowledgement.
-            if process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=1)
-            try:
-                conn.close()
-            except (EOFError, OSError, TimeoutError, CandidateError):
-                pass
+            _reap_child(conn, process)
 
 
 if __name__ == "__main__":

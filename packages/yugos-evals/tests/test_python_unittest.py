@@ -25,6 +25,87 @@ TESTS = (
 
 
 @pytest.mark.parametrize("correct", [True, False])
+def test_test_imports_restore_submodules_with_python_from_import_semantics(correct):
+    candidate = (
+        "def task_func(): return mock.Mock(return_value=17)()"
+        if correct
+        else "def task_func(): return 0"
+    )
+    tests = """
+import unittest
+from unittest import mock
+class TestCases(unittest.TestCase):
+    def test_submodule(self): self.assertEqual(task_func(), 17)
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux process metadata")
+def test_repeated_scalar_calls_do_not_accumulate_candidate_processes():
+    candidate = "def task_func(value): return value + 1"
+    tests = """
+import os
+import unittest
+from pathlib import Path
+class TestCases(unittest.TestCase):
+    def test_repeated_calls(self):
+        def children():
+            return Path(f'/proc/{os.getpid()}/task/{os.getpid()}/children').read_text().split()
+        self.assertEqual(task_func(0), 1)
+        initial = len(children())
+        for value in range(1, 12):
+            self.assertEqual(task_func(value), value + 1)
+            self.assertLessEqual(len(children()), initial + 1)
+"""
+    report = _run(candidate, tests=tests, timeout_s=15)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_returned_objects_remain_live_after_later_scalar_calls():
+    candidate = """
+class Result:
+    def value(self): return 23
+def task_func(kind): return Result() if kind == 'object' else 7
+"""
+    tests = """
+import unittest
+class TestCases(unittest.TestCase):
+    def test_live_object(self):
+        original = task_func('object')
+        for _ in range(8): self.assertEqual(task_func('scalar'), 7)
+        self.assertEqual(original.value(), 23)
+"""
+    report = _run(candidate, tests=tests, timeout_s=15)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+def test_plot_objects_and_latest_plot_queries_survive_worker_cleanup(matplotlib_cache, monkeypatch):
+    monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
+    candidate = """
+import matplotlib.pyplot as plt
+def task_func(label):
+    axes = plt.subplots()[1]
+    axes.set_title(label)
+    return axes
+"""
+    tests = """
+import unittest
+import matplotlib.pyplot as plt
+class TestCases(unittest.TestCase):
+    def test_owners(self):
+        first = task_func('first')
+        second = task_func('second')
+        self.assertEqual(first.get_title(), 'first')
+        self.assertEqual(second.get_title(), 'second')
+        self.assertEqual(plt.gca().get_title(), 'second')
+"""
+    report = _run(candidate, tests=tests, libs=("matplotlib",), timeout_s=15)
+    assert report["passed"] and report["cause"] == "all_pass"
+
+
+@pytest.mark.parametrize("correct", [True, False])
 def test_native_paths_work_as_inputs_and_preserve_their_result_type(correct):
     candidate = (
         "def task_func(path):\n path.write_text('updated')\n return path.with_suffix('.done')"
