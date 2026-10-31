@@ -123,6 +123,11 @@ def _profile(limits: CallLimits, task) -> FairnessProfile:
     )
 
 
+def _task_binding_key(definition: TaskConfig) -> str:
+    """Service model bindings are independent of sandbox placement."""
+    return definition.model_copy(update={"sandbox": None}).model_dump_json()
+
+
 def run_local(
     options: RunOptions,
     *,
@@ -160,7 +165,7 @@ def run_local(
     try:
         for question in questions:
             definition = TaskConfig.model_validate(question.inspect_task)
-            key = definition.model_dump_json()
+            key = _task_binding_key(definition)
             if key not in task_bindings:
                 task_bindings[key] = resolve_task_roles(definition, options.service_models)
             needed.update(definition.required_roles)
@@ -213,7 +218,7 @@ def run_local(
     }
 
     def roles_for_task(definition):
-        return task_models[definition.model_dump_json()]
+        return task_models[_task_binding_key(definition)]
 
     model = router_model(router, submission_id=metadata.submission_sha256)
     try:

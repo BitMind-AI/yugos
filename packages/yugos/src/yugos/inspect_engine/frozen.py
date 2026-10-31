@@ -198,7 +198,7 @@ def restore_tasks(
     *,
     model_roles: Mapping | Callable[[TaskConfig], Mapping] | None = None,
 ):
-    """Rebuild one Task per distinct serialized task config, in first-seen order."""
+    """Restore compatible tasks with their exact per-sample sandbox environments."""
     from yugos.competition.difficulty import question_identity
 
     groups: dict[str, tuple[TaskConfig, list[Sample]]] = {}
@@ -206,12 +206,16 @@ def restore_tasks(
         raise ValueError("pack requires distinct question IDs")
     for q in questions:
         task_config = TaskConfig.model_validate(q.inspect_task)
-        key = task_config.model_dump_json()
         # Sample validation discards a serialized sandbox spec, so decode it here.
         frozen = dict(q.inspect_sample)
         sandbox = sandbox_spec(frozen.pop("sandbox", None))
         sample = Sample.model_validate(frozen).model_copy(deep=True)
         sample.sandbox = sandbox
+        if task_config.sandbox is not None:
+            default = frozen_sandbox(sandbox_spec(task_config.sandbox))
+            if sandbox is not None and frozen_sandbox(sandbox) == default:
+                task_config = task_config.model_copy(update={"sandbox": None})
+        key = task_config.model_dump_json()
         if question_text(sample) != (q.prompt, q.expected_answer):
             raise ValueError("question text differs from its frozen Inspect sample")
         sample.id = q.question_id

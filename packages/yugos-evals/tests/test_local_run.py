@@ -131,6 +131,55 @@ def test_bound_grader_is_metered_apart_from_router_spend(tmp_path, provider):
     assert saved["spent_usd"]["services"] == pytest.approx(0.0015)
 
 
+@pytest.mark.parametrize("with_grader", [False, True])
+def test_distinct_sample_sandboxes_restore_before_local_worker_start(
+    tmp_path, provider, monkeypatch, with_grader
+):
+    from local_fixtures import default_questions
+
+    from yugos.inspect_engine.assets import frozen_sandbox
+    from yugos_evals.local import runner
+
+    original = graded_questions()[0] if with_grader else default_questions()[0]
+    questions = []
+    for index in (1, 2):
+        q = original.model_copy(deep=True, update={"question_id": f"sandbox:{index}"})
+        spec = {
+            "type": "modal",
+            "config": {
+                "services": {
+                    "default": {"image": f"fixture/image-{index}@sha256:" + str(index) * 64}
+                },
+                "x-modal": {"block_network": True},
+            },
+        }
+        q.inspect_task["sandbox"] = spec
+        q.inspect_sample["sandbox"] = spec
+        questions.append(q)
+
+    def inspect_restored(tasks, *, docker_available):
+        [(task, definition)] = tasks
+        assert len(task.dataset) == 2 and task.sandbox is None
+        assert (
+            len(
+                {
+                    frozen_sandbox(s.sandbox)["config"]["services"]["default"]["image"]
+                    for s in task.dataset
+                }
+            )
+            == 2
+        )
+        if with_grader:
+            assert definition.required_roles == ("grader",) and task.model_roles["grader"]
+        raise LocalRunError("fixture reached sandbox preflight")
+
+    monkeypatch.setattr(runner, "use_local_sandboxes", inspect_restored)
+    roles = {"grader": parse_model_choice("openai/gpt-judge")} if with_grader else {}
+    with pytest.raises(LocalRunError, match="fixture reached sandbox preflight"):
+        run(tmp_path, questions=questions, service_models=roles)
+    assert not (tmp_path / "run").exists() and provider.models == []
+
+
 def test_unused_role_bindings_are_refused(tmp_path, provider):
     with pytest.raises(LocalRunError, match="does not use"):
         run(tmp_path, service_models={"judge": parse_model_choice("openai/gpt-judge")})
