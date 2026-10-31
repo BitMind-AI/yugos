@@ -113,8 +113,11 @@ def test_scorer_settles_answers_and_leaves_grader_failures_unscored():
     assert wrong.value == 0.0 and wrong.metadata["code"] == "incorrect"
     truncated = _score("\\boxed{42}", stop_reason="max_tokens")
     assert truncated.value == 0.0 and truncated.metadata["code"] == "truncated"
-    empty = _score("")
-    assert empty.value == 0.0 and empty.reason == "no_response"
+    # An answer that stopped with no content is an attempt (it may have only reasoned).
+    for blank in ("", " \n\t"):
+        empty = _score(blank)
+        assert empty.value == 0.0 and empty.metadata["code"] == "incorrect"
+        assert empty.metadata["cause"] == "empty_answer"
     # An invalid reference is never a silent zero.
     invalid = _score("\\boxed{42}", target="")
     assert math.isnan(invalid.value) and invalid.metadata["code"] == "invalid_gold"

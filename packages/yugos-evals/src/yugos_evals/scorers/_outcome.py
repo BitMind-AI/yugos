@@ -67,13 +67,19 @@ def to_score(outcome: Outcome, *, answer: str | None = None, failure: str = "sco
     )
 
 
+def empty_answer() -> Outcome:
+    """An answer that stopped normally with no content: an attempt, graded incorrect."""
+    return Outcome(GradeCode.INCORRECT, details={"cause": "empty_answer"})
+
+
 def completion_gate(state: TaskState) -> Outcome | None:
     """The outcome for an answer that must not be graded, as Yugos grading gates it.
 
     A sample that ended at a limit before the router answered has no completion
-    and is not attempted, like an empty answer; a truncated answer is a graded
-    zero; an answer the provider blocked is graded incorrect; a completion that
-    ended for another reason than `stop` (a tool call) needs review.
+    and is not attempted; a truncated answer is a graded zero; an answer the
+    provider blocked is graded incorrect; a completion that ended for another
+    reason than `stop` (a tool call) needs review. An empty answer that stopped
+    normally (the model may have only reasoned) is an attempt, graded incorrect.
     """
     if not state.output.choices:
         return Outcome(GradeCode.NOT_ATTEMPTED, details={"cause": "no_response"})
@@ -90,4 +96,6 @@ def completion_gate(state: TaskState) -> Outcome | None:
             status="unavailable",
             details={"cause": "unknown_completion_status", "stop_reason": reason},
         )
+    if not state.output.completion.strip():
+        return empty_answer()
     return None

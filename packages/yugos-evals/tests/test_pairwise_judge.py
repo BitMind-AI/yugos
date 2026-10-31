@@ -16,6 +16,7 @@ from local_fixtures import CARD, ScriptedProvider, make_bundle, make_pack
 from yugos.inspect_engine import (
     RolePinMismatch,
     UnboundGraderRole,
+    category_measurements_from_log,
     restore_tasks,
     router_model,
     run_competition_eval,
@@ -187,6 +188,36 @@ def test_judged_run_scores_preference_and_never_shows_the_router_a_baseline(tmp_
     assert math.isnan(unusable.value) and unusable.reason == "grader_failed"
     assert unusable.metadata["code"] == "needs_review"
     assert "BASELINE" not in router.seen() and len(router.calls) == 2
+
+
+@pytest.mark.parametrize("answer", ["", " \n\t"])
+def test_empty_stopped_answers_are_incorrect_completed_attempts(tmp_path, monkeypatch, answer):
+    questions = _frozen(tmp_path, monkeypatch)
+
+    def unexpected_judge(text):
+        pytest.fail("an empty answer must settle without a judge call")
+
+    grader = judge(unexpected_judge)
+    [(task, _)] = restore_tasks(questions, model_roles={"grader": grader})
+    router = ScriptedRouter(answer)
+    log = run(task, router, tmp_path, model_roles={"grader": grader})
+    for sample in log.samples:
+        assert sample.error is None
+        score = sample.scores["pairwise_judge_scorer"]
+        assert score.value == 0.0
+        assert score.metadata["status"] == "graded"
+        assert score.metadata["code"] == "incorrect"
+    measurements = category_measurements_from_log(
+        log,
+        (),
+        {q.question_id: q.workload_class for q in questions},
+        run_id="run",
+        miner_id="miner",
+        submission_sha256="a" * 64,
+        cohort_sha256="b" * 64,
+        integrity_pass=True,
+    )
+    assert all(row.execution_complete for row in measurements)
 
 
 def test_a_mismatched_judge_pin_fails_before_the_router_is_called(tmp_path, monkeypatch):
