@@ -202,6 +202,24 @@ def test_delayed_completion_polls_the_same_result_without_replaying_signed_post(
     assert len(calls) == 3
 
 
+@pytest.mark.parametrize("path", ["/submissions", "/presigned"])
+def test_submission_admission_can_outlast_the_metadata_timeout(path):
+    """Both admission aliases must allow a slow server response without replaying the POST."""
+    calls = []
+    metadata_timeout = 0.01
+
+    def handle(request):
+        calls.append(request)
+        if request.extensions["timeout"]["read"] <= metadata_timeout:
+            raise httpx.ReadTimeout("admission outlasted metadata reads", request=request)
+        return httpx.Response(200, json={"data": {"model_id": 1}})
+
+    with httpx.Client(transport=httpx.MockTransport(handle), timeout=metadata_timeout) as client:
+        result = ServiceClient("https://evaluation.example", client).request("POST", path, {})
+    assert result == {"data": {"model_id": 1}}
+    assert len(calls) == 1
+
+
 def test_expired_signature_is_refreshed_and_result_polling_remains_unsigned():
     calls = []
     key = Keypair.create_from_uri("//Alice")

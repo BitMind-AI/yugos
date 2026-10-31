@@ -294,6 +294,7 @@ are not competition scores: the live pack, prices, and hardware differ.
 | --- | --- |
 | Hotkey is not registered | Register on subnet 34, then rerun `submit`. |
 | Request signature expired | Check the machine clock, keep the receipt, and rerun the same command. |
+| Network request timed out / The read operation timed out | Keep the same ZIP and receipt, and rerun the same submit command to resume. The request may have completed on the service. If it repeats, report the last progress message and your installed Yugos commit. |
 | Upload interrupted | Rerun `submit` on the same ZIP. The receipt resumes completed parts. |
 | Receipt does not match this submission | Use the wallet and network that created it. |
 | More funds needed | Open the status link and pay the shortfall, or add credits. |

@@ -114,10 +114,11 @@ class ServiceClient:
         url = self.endpoint + path
         if signed:
             headers.update(self._btauth(method, url, body))
-        # Large object verification can outlast the metadata request timeout.
+        # Submission admission and large object verification can outlast metadata reads.
         options = (
             {"timeout": 1800}
-            if path in {"/confirm", "/billing/prepare", "/multipart/complete", "/presigned"}
+            if path
+            in {"/submissions", "/presigned", "/confirm", "/billing/prepare", "/multipart/complete"}
             or path.endswith("/resume")
             else {}
         )

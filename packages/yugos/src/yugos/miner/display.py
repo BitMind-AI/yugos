@@ -190,11 +190,20 @@ def funding_wait_hint():
 
 def submission_error(error):
     """Explain actionable service failures without exposing transport response dumps."""
+    import httpx
+
     from yugos.service_client import ServiceError
 
     title = "Submission needs attention"
     message = str(error)
-    if isinstance(error, ServiceError):
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
+        title = "Network request timed out"
+        message = (
+            "No response arrived before the network timeout. The request may still have completed.\n"
+            "Keep the same ZIP and receipt, and rerun the same submit command to resume. "
+            "If this repeats, report the last progress message shown above."
+        )
+    elif isinstance(error, ServiceError):
         if error.code == "submission_limit_reached":
             title = "Submission limit reached"
             limit = error.detail.get("submissions_max")
@@ -287,10 +296,12 @@ class Activity:
             self._thread.start()
         return self
 
-    def __exit__(self, *_exc):
+    def __exit__(self, exc_type, *_exc):
         self._stop.set()
         if self._status is not None:
             self._status.stop()
+            if exc_type is not None:
+                self.console.print(self.message, markup=False, highlight=False)
         if self._thread is not None:
             self._thread.join(timeout=1)
         return False

@@ -1,12 +1,30 @@
 """Actionable submission errors without leaking raw service responses."""
 
 import json
+from io import StringIO
 
 import httpx
 import pytest
+from rich.console import Console
 
-from yugos.miner.display import submission_error
+from yugos.miner.display import Activity, submission_error
 from yugos.service_client import ServiceClient, ServiceError
+
+
+@pytest.mark.parametrize("error_type", [TimeoutError, httpx.ReadTimeout])
+def test_timeout_preserves_the_failed_terminal_step_and_explains_resume(error_type, capsys):
+    """A disappearing spinner must not hide whether the chain or hosted request failed."""
+    console = Console(file=StringIO(), force_terminal=True, record=True)
+    step = "Checking hotkey registration."
+    with pytest.raises(error_type) as caught:
+        with Activity(step, console=console):
+            raise error_type("The read operation timed out")
+    submission_error(caught.value)
+    assert step in console.export_text()
+    message = " ".join(capsys.readouterr().err.split())
+    assert "Network request timed out" in message
+    assert "same ZIP and receipt" in message
+    assert "may still have completed" in message
 
 
 @pytest.mark.parametrize("path", ["/submissions", "/presigned"])
