@@ -137,6 +137,7 @@ def test_distinct_sample_sandboxes_restore_before_local_worker_start(
 ):
     from local_fixtures import default_questions
 
+    from yugos.inspect_engine.assets import frozen_sandbox
     from yugos_evals.local import runner
 
     original = graded_questions()[0] if with_grader else default_questions()[0]
@@ -159,7 +160,15 @@ def test_distinct_sample_sandboxes_restore_before_local_worker_start(
     def inspect_restored(tasks, *, docker_available):
         [(task, definition)] = tasks
         assert len(task.dataset) == 2 and task.sandbox is None
-        assert len({s.sandbox.config.services["default"].image for s in task.dataset}) == 2
+        assert (
+            len(
+                {
+                    frozen_sandbox(s.sandbox)["config"]["services"]["default"]["image"]
+                    for s in task.dataset
+                }
+            )
+            == 2
+        )
         if with_grader:
             assert definition.required_roles == ("grader",) and task.model_roles["grader"]
         raise LocalRunError("fixture reached sandbox preflight")
