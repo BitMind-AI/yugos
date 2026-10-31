@@ -72,7 +72,11 @@ async def grade_unittest(
     except TimeoutError:
         return Outcome(GradeCode.INCORRECT, details={"cause": "timeout"})
     if not result.success:
-        raise RuntimeError(f"BigCodeBench test supervisor failed: exit {result.returncode}")
+        return Outcome(
+            GradeCode.GRADER_UNAVAILABLE,
+            status="unavailable",
+            details={"cause": "supervisor_failed", "returncode": result.returncode},
+        )
     try:
         report = json.loads(result.stdout)
         if not isinstance(report, dict) or type(report.get("passed")) is not bool:
@@ -80,8 +84,27 @@ async def grade_unittest(
         cause = report["cause"]
         if not isinstance(cause, str):
             raise ValueError("missing cause")
-    except (ValueError, KeyError, TypeError) as exc:
-        raise RuntimeError("BigCodeBench test supervisor returned an invalid report") from exc
+        if cause not in {
+            "all_pass",
+            "test_failure",
+            "timeout",
+            "unsupported_result",
+            "missing_test_cases",
+            "test_error",
+        } or report["passed"] != (cause == "all_pass"):
+            raise ValueError("contradictory report")
+        if cause in {"all_pass", "test_failure"} and not (
+            type(report.get("tests_run")) is int
+            and type(report.get("tests_expected")) is int
+            and 0 < report["tests_run"] == report["tests_expected"]
+        ):
+            raise ValueError("incomplete tests")
+    except (ValueError, KeyError, TypeError):
+        return Outcome(
+            GradeCode.GRADER_UNAVAILABLE,
+            status="unavailable",
+            details={"cause": "invalid_supervisor_report"},
+        )
     if cause == "unsupported_result":
         return Outcome(
             GradeCode.GRADER_UNAVAILABLE,
@@ -97,8 +120,37 @@ async def grade_unittest(
     return Outcome(
         GradeCode.CORRECT if report["passed"] else GradeCode.INCORRECT,
         score=1.0 if report["passed"] else 0.0,
-        details={"cause": cause},
+        details={
+            "cause": cause,
+            **{key: report[key] for key in ("tests_run", "tests_expected") if key in report},
+        },
     )
+
+
+async def preflight_unittest(
+    env: SandboxEnvironment,
+    reference: str,
+    tests: str,
+    **settings,
+) -> dict:
+    """Qualify unchanged tests against their reference and a failing control, without inference."""
+    gold = await grade_unittest(env, reference, tests, reference=reference, **settings)
+    wrong = await grade_unittest(
+        env,
+        "def task_func(*args, **kwargs): raise AssertionError('preflight wrong control')",
+        tests,
+        reference=reference,
+        **settings,
+    )
+    return {
+        "passed": (
+            gold.code == GradeCode.CORRECT
+            and wrong.code == GradeCode.INCORRECT
+            and wrong.details.get("cause") == "test_failure"
+        ),
+        "reference": {"code": gold.code.value, "status": gold.status, **gold.details},
+        "wrong_control": {"code": wrong.code.value, "status": wrong.status, **wrong.details},
+    }
 
 
 @scorer(metrics=[mean(), std()])

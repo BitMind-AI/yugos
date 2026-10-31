@@ -13,18 +13,21 @@ import io
 import json
 import math
 import os
+import pathlib
 import socket
 import subprocess
 import sys
 import time
 import unittest
 import warnings
+from _socket import socketpair as _transport_socketpair
 from contextlib import ExitStack, redirect_stdout
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from decimal import Decimal
+from os import urandom as _transport_urandom
+from subprocess import Popen as _transport_popen
 
-import pyarrow as pa
 import rpyc
 from rpyc.core import consts
 from rpyc.core.channel import Channel
@@ -32,6 +35,12 @@ from rpyc.core.protocol import Connection
 from rpyc.core.stream import SocketStream
 
 MAX_RPC_BYTES = 16_000_000
+MAX_RSA_BYTES = 16_384
+MAX_POINT_BYTES = 64
+PATH_TYPES = {
+    name: getattr(pathlib, name)
+    for name in ("PosixPath", "WindowsPath", "PurePosixPath", "PureWindowsPath")
+}
 FIXTURE_CALL = 101
 _fixture_registry = None
 _fixture_connection = None
@@ -117,12 +126,24 @@ class SupervisorConnection(Connection):
         self._send(consts.MSG_REPLY, seq, self._box(result))
 
     def _box(self, obj):
+        if getattr(self, "value_tag", None) and type(obj).__module__.startswith(
+            ("numpy", "pandas")
+        ):
+            return super()._box((self.value_tag, _transfer(obj, allow_axes=False)))
         boxed = super()._box(obj)
         if boxed[0] == consts.LABEL_REMOTE_REF:
             self.fixtures.register(obj)
         return boxed
 
     def _unbox(self, package):
+        if package[0] == consts.LABEL_REMOTE_REF and package[1][0].startswith(
+            ("matplotlib.axes.", "matplotlib.figure.")
+        ):
+            # RPyC resolves proxy classes from already imported trusted modules.
+            # Load these before creating a plot proxy, including when the task's
+            # optional library hints do not mention Matplotlib.
+            importlib.import_module("matplotlib.axes")
+            importlib.import_module("matplotlib.figure")
         value = super()._unbox(package)
         if package[0] == consts.LABEL_LOCAL_REF and id(value) not in self.fixtures.identities:
             raise CandidateError("unregistered fixture reference")
@@ -176,10 +197,22 @@ class SupervisorConnection(Connection):
             if name_box[0] != consts.LABEL_VALUE:
                 raise CandidateError("invalid fixture attribute")
             name = name_box[1]
+            # NumPy probes these absent protocols before iterating ordinary
+            # containers. Let RPyC return AttributeError without opening private
+            # attributes on fixtures that could actually implement a protocol.
+            absent_array_protocol = (
+                type(obj) in {list, dict, set, frozenset}
+                and type(name) is str
+                and name in {"__array__", "__array_interface__", "__array_struct__"}
+            )
             if (
                 type(name) is not str
                 or name in self.fixtures._BLOCKED
-                or (name.startswith("_") and name not in self.fixtures._SPECIAL)
+                or (
+                    name.startswith("_")
+                    and name not in self.fixtures._SPECIAL
+                    and not absent_array_protocol
+                )
             ):
                 raise CandidateError("fixture attribute is not available")
 
@@ -202,15 +235,62 @@ class SupervisorConnection(Connection):
             raise
 
 
+class CandidateConnection(Connection):
+    """Restore explicitly tagged trusted array arguments to candidate plot methods."""
+
+    def _unbox(self, package):
+        value = super()._unbox(package)
+        if (
+            type(value) is tuple
+            and len(value) == 2
+            and type(value[0]) is str
+            and value[0] == getattr(self, "value_tag", None)
+        ):
+            return _materialize(value[1], allow_axes=False)
+        return value
+
+
+def _urllib3_error_fields(error_type):
+    """Describe constructors only for exact exception types already loaded."""
+    module = sys.modules.get("urllib3.exceptions")
+    fields = {
+        "MaxRetryError": ("pool", "url", "reason"),
+        "NameResolutionError": ("_host", "conn", "_reason"),
+        "NewConnectionError": ("conn", "_message"),
+    }
+    for name, names in fields.items():
+        if module is not None and error_type is getattr(module, name, None):
+            return names
+    return ()
+
+
 def _exception_record(error):
+    from urllib.error import HTTPError
+
+    fields = _urllib3_error_fields(type(error))
+    if fields:
+        return (
+            type(error).__module__,
+            type(error).__qualname__,
+            _transfer(tuple(getattr(error, field) for field in fields)),
+            _transfer(error.args),
+        )
     args = (
-        (error.msg, error.doc, error.pos) if isinstance(error, json.JSONDecodeError) else error.args
+        (error.msg, error.doc, error.pos)
+        if isinstance(error, json.JSONDecodeError)
+        else (error.url, error.code, error.msg, error.hdrs, error.fp)
+        if isinstance(error, HTTPError)
+        else error.args
     )
     return (type(error).__module__, type(error).__qualname__, _transfer(args))
 
 
 def _make_exception(record, *, candidate=False):
-    module_name, name, args = record
+    if type(record) is not tuple or len(record) not in (3, 4):
+        raise CandidateError("invalid exception record")
+    module_name, name, args = record[:3]
+    if type(module_name) is not str or type(name) is not str:
+        raise CandidateError("invalid exception type")
     module = importlib.import_module(module_name) if candidate else sys.modules.get(module_name)
     error_type = module
     for part in name.split("."):
@@ -219,8 +299,19 @@ def _make_exception(record, *, candidate=False):
         error_type = getattr(error_type, part, None)
     if not isinstance(error_type, type) or not issubclass(error_type, Exception):
         raise CandidateError("unavailable exception type")
-    values = _materialize(args, allow_axes=False)
-    return error_type(*values)
+    fields = _urllib3_error_fields(error_type)
+    if len(record) == 4 and not fields:
+        raise CandidateError("unavailable exception constructor")
+    # These exact trusted constructors retain candidate-owned pool/connection
+    # references. Generic exception arguments still reject live references.
+    values = _materialize(args, allow_axes=bool(fields))
+    restored = error_type(*values)
+    if len(record) == 4:
+        original_args = _materialize(record[3], allow_axes=False)
+        if type(original_args) is not tuple:
+            raise CandidateError("invalid original exception arguments")
+        restored.args = original_args
+    return restored
 
 
 def _raise_exception(record, *, candidate=False):
@@ -233,6 +324,44 @@ class FixtureProxy:
     def __init__(self, identity, fixture_type=None):
         self.identity = identity
         self.fixture_type = fixture_type
+
+    @property
+    def __name__(self):
+        if "_name_override" in self.__dict__:
+            return self._name_override
+        return self._request("get", "__name__")
+
+    @__name__.setter
+    def __name__(self, value):
+        self._name_override = value
+
+    @property
+    def __signature__(self):
+        if "_signature_override" in self.__dict__:
+            return self._signature_override
+        import inspect
+
+        record = self._request("signature")
+
+        def restore(value):
+            return value[1] if value[0] else inspect.Parameter.empty
+
+        return inspect.Signature(
+            [
+                inspect.Parameter(
+                    p["name"],
+                    p["kind"],
+                    default=restore(p["default"]),
+                    annotation=restore(p["annotation"]),
+                )
+                for p in record["parameters"]
+            ],
+            return_annotation=restore(record["return_annotation"]),
+        )
+
+    @__signature__.setter
+    def __signature__(self, value):
+        self._signature_override = value
 
     @property
     def __class__(self):
@@ -297,6 +426,7 @@ class FixtureRegistry:
         "__next__",
         "__getitem__",
         "__len__",
+        "__length_hint__",
         "__bool__",
         "__call__",
         "__setitem__",
@@ -393,6 +523,7 @@ class FixtureRegistry:
         return tuple(result)
 
     def dispatch(self, request):
+        from types import FunctionType
         from unittest.mock import Mock
 
         try:
@@ -404,7 +535,29 @@ class FixtureRegistry:
             kwargs = _materialize(encoded_kwargs)
             if type(args) is not tuple or type(kwargs) is not dict:
                 raise CandidateError("invalid fixture arguments")
-            if operation == "truth":
+            if operation == "signature":
+                if type(value) is not FunctionType:
+                    raise AttributeError("__signature__")
+                import inspect
+
+                signature = inspect.signature(value)
+
+                def record(v):
+                    return (False, None) if v is inspect.Parameter.empty else (True, v)
+
+                result = {
+                    "parameters": [
+                        {
+                            "name": p.name,
+                            "kind": int(p.kind),
+                            "default": record(p.default),
+                            "annotation": record(p.annotation),
+                        }
+                        for p in signature.parameters.values()
+                    ],
+                    "return_annotation": record(signature.return_annotation),
+                }
+            elif operation == "truth":
                 result = bool(value)
             elif operation == "call":
                 if not isinstance(value, Mock) and identity not in self.methods:
@@ -414,7 +567,11 @@ class FixtureRegistry:
                 if (
                     type(name) is not str
                     or name in self._BLOCKED
-                    or (name.startswith("_") and name not in self._SPECIAL)
+                    or (
+                        name.startswith("_")
+                        and name not in self._SPECIAL
+                        and not (type(value) is FunctionType and name == "__name__")
+                    )
                 ):
                     raise CandidateError("fixture attribute is not available")
                 if (
@@ -428,7 +585,11 @@ class FixtureRegistry:
                         and hasattr(value, "__next__")
                     )
                 ):
-                    if name.startswith("_") and name not in self._SPECIAL:
+                    if (
+                        name.startswith("_")
+                        and name not in self._SPECIAL
+                        and not (type(value) is FunctionType and name == "__name__")
+                    ):
                         raise CandidateError("fixture operation is not available")
                 result = getattr(value, name)
                 if operation == "method":
@@ -443,6 +604,8 @@ class FixtureRegistry:
 
 
 def _has_extension(dtype):
+    import pyarrow as pa
+
     if isinstance(dtype, pa.ExtensionType):
         return True
     if pa.types.is_dictionary(dtype):
@@ -451,6 +614,8 @@ def _has_extension(dtype):
 
 
 def _arrow_dataframe(payload):
+    import pyarrow as pa
+
     if type(payload) is not bytes or len(payload) > MAX_RPC_BYTES:
         raise UnsupportedResult("invalid Arrow payload")
     with pa.ipc.open_stream(pa.BufferReader(payload)) as reader:
@@ -467,10 +632,100 @@ def _arrow_dataframe(payload):
     return frame
 
 
+def _zoneinfo_columns(frame):
+    """Retain canonical ZoneInfo providers that Arrow otherwise replaces."""
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+
+    columns = []
+    for position, dtype in enumerate(frame.dtypes):
+        if not isinstance(dtype, pd.DatetimeTZDtype) or type(dtype.tz) is not ZoneInfo:
+            continue
+        key = dtype.tz.key
+        if type(key) is not str or not 0 < len(key) <= 255:
+            raise UnsupportedResult("timezone has no portable key")
+        try:
+            canonical = ZoneInfo(key)
+        except (ValueError, KeyError) as exc:
+            raise UnsupportedResult("timezone key cannot be restored") from exc
+        if dtype.tz is not canonical:
+            # A from_file timezone can claim another zone's name. A key alone
+            # cannot prove its transition rules, so leave it unavailable.
+            raise UnsupportedResult("noncanonical timezone cannot be restored")
+        columns.append((position, key))
+    return tuple(columns)
+
+
+def _restore_zoneinfo(frame, columns):
+    """Restore only bounded descriptors matching the decoded Arrow schema."""
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+
+    if type(columns) is not tuple or len(columns) > len(frame.columns):
+        raise CandidateError("invalid timezone column metadata")
+    seen = set()
+    for item in columns:
+        if type(item) is not tuple or len(item) != 2:
+            raise CandidateError("invalid timezone column descriptor")
+        position, key = item
+        if (
+            type(position) is not int
+            or not 0 <= position < len(frame.columns)
+            or position in seen
+            or type(key) is not str
+            or not 0 < len(key) <= 255
+        ):
+            raise CandidateError("invalid timezone column descriptor")
+        dtype = frame.iloc[:, position].dtype
+        if not isinstance(dtype, pd.DatetimeTZDtype) or str(dtype.tz) != key:
+            raise CandidateError("timezone column differs from Arrow schema")
+        try:
+            zone = ZoneInfo(key)
+        except (ValueError, KeyError) as exc:
+            raise CandidateError("invalid timezone key") from exc
+        seen.add(position)
+        frame.isetitem(position, frame.iloc[:, position].dt.tz_convert(zone))
+    return frame
+
+
+def _restore_object_columns(frame, columns, *, allow_axes):
+    """Restore bounded plain values without asking Arrow to infer mixed cells."""
+    import numpy as np
+    import pandas as pd
+
+    if type(columns) is not tuple or len(columns) > len(frame.columns):
+        raise CandidateError("invalid DataFrame object columns")
+    seen = set()
+    for item in columns:
+        if type(item) is not tuple or len(item) != 2:
+            raise CandidateError("invalid DataFrame object column")
+        column, values = item
+        if (
+            type(column) is not int
+            or not 0 <= column < len(frame.columns)
+            or column in seen
+            or not pd.api.types.is_object_dtype(frame.iloc[:, column].dtype)
+            or type(values) is not tuple
+            or len(values) != len(frame)
+            or len(values) * 8 > MAX_RPC_BYTES
+        ):
+            raise CandidateError("invalid DataFrame object column")
+        seen.add(column)
+        restored = np.empty(len(values), dtype=object)
+        for row, value in enumerate(values):
+            restored[row] = _materialize(value, allow_axes=allow_axes)
+        frame.isetitem(column, restored)
+    return frame
+
+
 def _transfer(value, *, allow_axes=True):
     """Use Arrow for DataFrames and native RPyC references for Matplotlib axes."""
     if isinstance(value, FixtureProxy):
         return ("fixture", value.identity)
+    if type(value) in PATH_TYPES.values():
+        return ("pathlib_path", (type(value).__name__, str(value)))
     if isinstance(value, Exception):
         return ("exception", _exception_record(value))
     if _fixture_registry is not None:
@@ -486,6 +741,25 @@ def _transfer(value, *, allow_axes=True):
                     type(value).__qualname__,
                 ),
             )
+    from types import FunctionType
+
+    if _fixture_registry is not None and type(value) is FunctionType:
+        return (
+            "fixture",
+            (_fixture_registry.register(value, method=True), "types", "FunctionType"),
+        )
+    if type(value).__module__.startswith("shapely"):
+        from shapely import wkb
+        from shapely.geometry import Point
+
+        if type(value) is Point:
+            payload = wkb.dumps(value, include_srid=True)
+            if len(payload) > MAX_POINT_BYTES:
+                raise UnsupportedResult("Point exceeds the value limit")
+            restored = wkb.loads(payload)
+            if type(restored) is not Point or wkb.dumps(restored, include_srid=True) != payload:
+                raise UnsupportedResult("Point cannot round-trip through WKB")
+            return ("shapely_point", payload)
     if type(value).__module__.startswith("numpy"):
         import numpy as np
 
@@ -506,6 +780,7 @@ def _transfer(value, *, allow_axes=True):
             return ("numpy_scalar" if isinstance(value, np.generic) else "numpy", payload)
     if type(value).__module__.startswith("pandas"):
         import pandas as pd
+        import pyarrow as pa
 
         if isinstance(value, pd.Timestamp):
             return ("pandas_timestamp", value.isoformat())
@@ -521,21 +796,60 @@ def _transfer(value, *, allow_axes=True):
             )
         if type(value) is pd.DataFrame:
             try:
-                table = pa.Table.from_pandas(value, preserve_index=True)
+                zones = _zoneinfo_columns(value)
+                positions = tuple(
+                    index
+                    for index, dtype in enumerate(value.dtypes)
+                    if pd.api.types.is_object_dtype(dtype)
+                )
+                if len(value) * len(positions) * 8 > MAX_RPC_BYTES:
+                    raise UnsupportedResult("DataFrame object cells exceed the value limit")
+                object_columns = tuple(
+                    (
+                        index,
+                        tuple(_transfer(v, allow_axes=False) for v in value.iloc[:, index]),
+                    )
+                    for index in positions
+                )
+                portable = value.copy(deep=False)
+                for index, _ in object_columns:
+                    portable.isetitem(index, pd.Series([None] * len(value), dtype=object).array)
+                table = pa.Table.from_pandas(portable, preserve_index=True)
                 sink = pa.BufferOutputStream()
                 with pa.ipc.new_stream(sink, table.schema) as writer:
                     writer.write_table(table)
                 payload = sink.getvalue().to_pybytes()
                 # Reject lossy conversion instead of changing what tests observe.
-                pd.testing.assert_frame_equal(value, _arrow_dataframe(payload))
-            except (pa.ArrowException, AssertionError, TypeError, ValueError) as exc:
+                pd.testing.assert_frame_equal(
+                    value,
+                    _restore_object_columns(
+                        _restore_zoneinfo(_arrow_dataframe(payload), zones),
+                        object_columns,
+                        allow_axes=False,
+                    ),
+                )
+            except (
+                pa.ArrowException,
+                AssertionError,
+                TypeError,
+                ValueError,
+                CandidateError,
+            ) as exc:
                 raise UnsupportedResult("DataFrame cannot round-trip through Arrow") from exc
-            object_columns = tuple(
-                (index, tuple(_transfer(v, allow_axes=allow_axes) for v in value.iloc[:, index]))
-                for index, dtype in enumerate(value.dtypes)
-                if pd.api.types.is_object_dtype(dtype)
+            return ("dataframe", (payload, object_columns, zones))
+    if type(value).__module__.startswith("cryptography"):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
+        if isinstance(value, RSAPrivateKey):
+            payload = value.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
             )
-            return ("dataframe", (payload, object_columns))
+            if len(payload) > MAX_RSA_BYTES:
+                raise UnsupportedResult("RSA fixture exceeds the value limit")
+            return ("rsa_private_key", payload)
     if type(value).__module__.startswith("matplotlib"):
         from matplotlib.axes import Axes
         from matplotlib.figure import Figure
@@ -546,10 +860,15 @@ def _transfer(value, *, allow_axes=True):
         return ("scalar", str(value))
     if type(value) is Decimal:
         return ("decimal", str(value))
-    from collections import Counter
+    from collections import Counter, deque
 
     if type(value) is Counter:
         return ("counter", _transfer(dict(value), allow_axes=allow_axes))
+    if type(value) is deque:
+        return (
+            "deque",
+            (value.maxlen, tuple(_transfer(v, allow_axes=allow_axes) for v in value)),
+        )
     if type(value) in (date, datetime, datetime_time):
         return (type(value).__name__, value.isoformat())
     if type(value) is timedelta:
@@ -597,6 +916,40 @@ def _materialize(value, *, allow_axes=True):
             except (ImportError, AttributeError):
                 fixture_type = None
         return FixtureProxy(identity, fixture_type)
+    if kind == "pathlib_path":
+        if (
+            type(data) is not tuple
+            or len(data) != 2
+            or type(data[0]) is not str
+            or data[0] not in PATH_TYPES
+            or type(data[1]) is not str
+            or len(data[1].encode("utf-8")) > MAX_RPC_BYTES
+        ):
+            raise CandidateError("invalid path descriptor")
+        try:
+            return PATH_TYPES[data[0]](data[1])
+        except (TypeError, ValueError, NotImplementedError) as error:
+            raise CandidateError("path cannot be restored on this platform") from error
+    if kind == "shapely_point":
+        if type(data) is not bytes or not 0 < len(data) <= MAX_POINT_BYTES:
+            raise CandidateError("invalid Point payload")
+        from shapely import wkb
+        from shapely.geometry import Point
+
+        restored = wkb.loads(data)
+        if type(restored) is not Point or wkb.dumps(restored, include_srid=True) != data:
+            raise CandidateError("payload is not a lossless Point")
+        return restored
+    if kind == "rsa_private_key":
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
+        if type(data) is not bytes or not 0 < len(data) <= MAX_RSA_BYTES:
+            raise UnsupportedResult("invalid RSA fixture payload")
+        key = serialization.load_der_private_key(data, password=None)
+        if not isinstance(key, RSAPrivateKey):
+            raise UnsupportedResult("fixture is not an RSA private key")
+        return key
     if kind == "exception":
         return _make_exception(data, candidate=_fixture_registry is None)
     if kind in {"pandas_timestamp", "pandas_na", "pandas_nat"}:
@@ -661,21 +1014,27 @@ def _materialize(value, *, allow_axes=True):
         from collections import Counter
 
         return Counter(_materialize(data, allow_axes=allow_axes))
+    if kind == "deque":
+        from collections import deque
+
+        if (
+            type(data) is not tuple
+            or len(data) != 2
+            or (data[0] is not None and (type(data[0]) is not int or data[0] < 0))
+            or type(data[1]) is not tuple
+            or (data[0] is not None and len(data[1]) > data[0])
+        ):
+            raise CandidateError("invalid deque value")
+        return deque((_materialize(v, allow_axes=allow_axes) for v in data[1]), maxlen=data[0])
     if kind == "arrow":
         return _arrow_dataframe(data)
     if kind == "dataframe":
-        payload, columns = data
-        frame = _arrow_dataframe(payload)
-        for column, values in columns:
-            if (
-                type(column) is not int
-                or not 0 <= column < len(frame.columns)
-                or len(values) != len(frame)
-            ):
-                raise CandidateError("invalid DataFrame object column")
-            for row, value in enumerate(values):
-                frame.iat[row, column] = _materialize(value, allow_axes=allow_axes)
-        return frame
+        if type(data) is not tuple or len(data) not in (2, 3):
+            raise CandidateError("invalid DataFrame payload")
+        payload, columns = data[:2]
+        zones = data[2] if len(data) == 3 else ()
+        frame = _restore_zoneinfo(_arrow_dataframe(payload), zones)
+        return _restore_object_columns(frame, columns, allow_axes=False)
     if kind == "axes" and allow_axes:
         from matplotlib.axes import Axes
         from matplotlib.figure import Figure
@@ -704,7 +1063,43 @@ def _materialize(value, *, allow_axes=True):
     raise CandidateError("invalid candidate return value")
 
 
-def _candidate_serve(sock, candidate):
+def _test_import_bindings(source):
+    """Describe only test-module imports, without sharing assertions or test globals."""
+    bindings = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Import):
+            bindings.extend(
+                ("module", name.name, name.asname or name.name.split(".")[0], bool(name.asname))
+                for name in node.names
+            )
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module not in {None, "__future__", "__main__"}
+        ):
+            bindings.extend(
+                ("from", node.module, name.name, name.asname or name.name)
+                for name in node.names
+                if name.name != "*"
+            )
+    return tuple(bindings)
+
+
+def _apply_test_imports(namespace, bindings):
+    """Restore the library aliases shared by upstream solution and test namespaces."""
+    for kind, module_name, name, alias in bindings:
+        module = importlib.import_module(module_name)
+        if kind == "module":
+            namespace[name] = (
+                module if alias else importlib.import_module(module_name.split(".")[0])
+            )
+        elif kind == "from":
+            namespace[alias] = getattr(__import__(module_name, fromlist=[name]), name)
+        else:
+            raise CandidateError("invalid test import binding")
+
+
+def _candidate_serve(sock, candidate, value_tag, test_imports=()):
     global _fixture_connection
     with open(os.devnull, "w") as sink:
         os.dup2(sink.fileno(), 1)
@@ -715,6 +1110,8 @@ def _candidate_serve(sock, candidate):
     loaded = False
 
     class CandidateService(rpyc.Service):
+        _protocol = CandidateConnection
+
         def exposed_transfer(self, value):
             return _transfer(value)
 
@@ -769,6 +1166,7 @@ def _candidate_serve(sock, candidate):
 
                     np.random.set_state(state[1])
             exec(compile(candidate, "<candidate>", "exec"), namespace)
+            _apply_test_imports(namespace, test_imports)
             loaded = True
             self.exposed_configure(patches)
             function = namespace.get("task_func")
@@ -806,13 +1204,15 @@ def _candidate_serve(sock, candidate):
                 ),
             )
 
-    # Public access is enabled only in the untrusted candidate process, for
-    # native netrefs to plot methods/properties. No pickle or custom exceptions.
+    # Trusted assertions may inspect candidate-owned private attributes. These
+    # permissions apply only in the untrusted process; supervisor callbacks
+    # still pass the strict fixture guards. No pickle or custom exceptions.
     channel = BoundedChannel(SocketStream(sock))
     conn = CandidateService._connect(
         channel,
         config={
             "allow_public_attrs": True,
+            "allow_all_attrs": True,
             "allow_setattr": True,
             "allow_delattr": True,
             "allow_pickle": False,
@@ -820,6 +1220,7 @@ def _candidate_serve(sock, candidate):
             "instantiate_custom_exceptions": False,
         },
     )
+    conn.value_tag = value_tag
     _fixture_connection = conn
     try:
         conn.serve_all()
@@ -894,6 +1295,21 @@ def _offline_http(stack, fixtures):
     stack.enter_context(patch("requests.sessions.Session.request", side_effect=request))
 
 
+def _reap_child(conn, process):
+    """Reap before closing RPC so a candidate cannot prolong close acknowledgement."""
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1)
+    try:
+        conn.close()
+    except (EOFError, OSError, TimeoutError, CandidateError):
+        pass
+
+
 def run(request):
     """Evaluate trusted unittest assertions against isolated candidate calls."""
     global _fixture_registry
@@ -916,10 +1332,12 @@ def run(request):
         if time.monotonic() >= deadline:
             timed_out = True
             raise CandidateError("candidate timeout")
-        parent, child = socket.socketpair()
+        # Tests may mock socket.socket. The supervisor's IPC must remain real
+        # while those mocks are forwarded to the candidate as test fixtures.
+        parent, child = _transport_socketpair()
         # Only submitted code and the socket enter this fresh interpreter;
         # it inherits neither the supervisor's test data nor its call stack.
-        process = subprocess.Popen(
+        process = _transport_popen(
             [
                 sys.executable,
                 "-I",
@@ -952,6 +1370,7 @@ def run(request):
         conn.deadline = deadline
         conn.timeout_callback = mark_timeout
         conn.fixtures = fixtures
+        conn.value_tag = _transport_urandom(32).hex()
         last_connection = conn
         conn._config["allow_getattr"] = True
         conn._config["allow_safe_attrs"] = True
@@ -962,9 +1381,36 @@ def run(request):
             configured = bool(module is not None and module.settings.configured)
             conn.root.configure(fixtures.manifest(), configured)
 
+        # Copied values need no owner process. Escaping proxies keep theirs;
+        # the newest worker also stays available for subsequent pyplot queries.
+        for previous_conn, previous_process in tuple(children):
+            if previous_conn is last_connection:
+                continue
+            try:
+                proxies = [
+                    previous_conn._proxy_cache.get(key)
+                    for key in tuple(previous_conn._proxy_cache.keys())
+                ]
+            except (KeyError, RuntimeError):
+                continue
+            if any(
+                proxy is not None and proxy is not previous_conn._remote_root for proxy in proxies
+            ):
+                continue
+            _reap_child(previous_conn, previous_process)
+            children.remove((previous_conn, previous_process))
+
         conn.prepare_callback = prepare_call
         try:
-            process.stdin.write(json.dumps({"candidate": request["candidate"]}).encode("utf-8"))
+            process.stdin.write(
+                json.dumps(
+                    {
+                        "candidate": request["candidate"],
+                        "value_tag": conn.value_tag,
+                        "test_imports": _test_import_bindings(request["tests"]),
+                    }
+                ).encode("utf-8")
+            )
             process.stdin.close()
             import random
 
@@ -1071,25 +1517,18 @@ def run(request):
         fixtures.close()
         _fixture_registry = None
         for conn, process in children:
-            # Reap before protocol close: an uncooperative candidate must not
-            # prolong cleanup by withholding RPyC's close acknowledgement.
-            if process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=1)
-            try:
-                conn.close()
-            except (EOFError, OSError, TimeoutError, CandidateError):
-                pass
+            _reap_child(conn, process)
 
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--candidate"]:
         payload = json.load(sys.stdin)
-        _candidate_serve(socket.socket(fileno=int(sys.argv[2])), payload["candidate"])
+        _candidate_serve(
+            socket.socket(fileno=int(sys.argv[2])),
+            payload["candidate"],
+            payload["value_tag"],
+            payload.get("test_imports", ()),
+        )
     else:
         request = json.load(sys.stdin)
         with redirect_stdout(sys.stderr):
