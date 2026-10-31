@@ -108,6 +108,7 @@ class TestCases(unittest.TestCase):
 
 def test_plot_objects_and_latest_plot_queries_survive_worker_cleanup(matplotlib_cache, monkeypatch):
     monkeypatch.setenv("MPLCONFIGDIR", str(matplotlib_cache))
+    monkeypatch.setenv("MPLBACKEND", "Agg")
     candidate = """
 import matplotlib.pyplot as plt
 def task_func(label):
