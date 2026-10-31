@@ -152,6 +152,47 @@ def _balanced_answer(value: str) -> bool:
     return depth == 0 and r"\boxed" not in value
 
 
+def _question_contract(question: str) -> tuple[str, str]:
+    """Recognize explicit unit requests and comma-separated roots, without item IDs."""
+    ordered = re.search(
+        r"\b(?:(?:ascending|descending|increasing|decreasing|given|that)\s+order|ordered)\b",
+        question,
+        re.I,
+    )
+    roots = re.search(r"\b(?:roots|solutions)\b[^.?!\n]*\bseparated by commas\b", question, re.I)
+    order = "ordered" if ordered else "unordered" if roots else "auto"
+    explicit_units = re.search(
+        r"\bexpress(?:ed|\s+(?:your|the)\s+[a-z]+)?\s+in\s+"
+        r"([a-z]+(?:\s+per\s+[a-z]+)?)\s*[?.]",
+        question,
+        re.I,
+    )
+    count = re.search(
+        r"\bhow many\s+([a-z]{2,}s)\s+(?:must|does|did|will|are|were|do|can|should|would|could)\b",
+        question,
+        re.I,
+    )
+    if explicit_units:
+        return explicit_units[1].lower(), order
+    if count and count[1].lower() != "less":
+        return count[1].lower(), order
+    if re.search(r"\b(?:as a percentage|in percent|what percent(?:age)?)\b", question, re.I):
+        return "%", order
+    return "", order
+
+
+def _strip_answer_units(value: str, units: str) -> str:
+    """Normalize each comma-separated value, keeping unrecognized units intact."""
+    suffix = r"(?:\\text\{\s*" + re.escape(units) + r"\s*\}|" + re.escape(units) + r")\s*$"
+    if units == "degrees":
+        suffix = r"(?:\^\{?\\circ\}?|" + suffix + r")\s*$"
+    elif units == "%":
+        suffix = r"\\?%\s*$"
+    return ",".join(
+        re.sub(suffix, "", part.strip(), flags=re.I).strip() for part in _comma_parts(value)
+    )
+
+
 def _line_answers(expected: str, response: str, units: str, answer_order: str):
     """Prepare the explicit final field; Math-Verify still owns expression normalization."""
     from inspect_evals.math.utils import extract_answer
@@ -175,20 +216,17 @@ def _line_answers(expected: str, response: str, units: str, answer_order: str):
     if re.search(r"\b(?:or|and)\b", response):
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "ambiguous_answer"})
     if not units:
-        suffix = re.search(r"^([-+]?\d+(?:\.\d+)?)\\text\{\s*([a-z ]+)\}$", expected)
-        if suffix:
-            units = suffix[2].strip()
-        elif re.search(r"\^\{?\\circ\}?$", expected):
-            units = "degrees"
+        reference_units = set()
+        for part in _comma_parts(expected):
+            suffix = re.fullmatch(r"[-+]?\d+(?:\.\d+)?\\text\{\s*([a-z ]+)\}", part.strip())
+            if suffix:
+                reference_units.add(suffix[1].strip())
+            elif re.search(r"\^\{?\\circ\}?$", part.strip()):
+                reference_units.add("degrees")
+        if len(reference_units) == 1:
+            units = reference_units.pop()
     if units:
-        suffix = r"(?:\\text\{\s*" + re.escape(units) + r"\s*\}|" + re.escape(units) + r")\s*$"
-        if units == "degrees":
-            suffix = r"(?:\^\{?\\circ\}?|" + suffix + r")\s*$"
-        elif units == "%":
-            suffix = r"\\?%\s*$"
-        expected, response = (
-            re.sub(suffix, "", value, flags=re.I).strip() for value in (expected, response)
-        )
+        expected, response = (_strip_answer_units(value, units) for value in (expected, response))
     expected, response = (
         re.sub(r"\\?%", r"\\cdot\\frac{1}{100}", value) for value in (expected, response)
     )
@@ -253,8 +291,7 @@ def grade_math(
     text: str,
     *,
     answer_format: str = "auto",
-    units: str = "",
-    answer_order: str = "auto",
+    question: str = "",
 ) -> Outcome:
     """Compare a response's final answer with the reference; parser failures never escape."""
     expected = (gold or "").strip()
@@ -265,9 +302,10 @@ def grade_math(
         return Outcome(GradeCode.NOT_ATTEMPTED)
     if answer_format == "auto" and _ambiguous_numeric_answer(expected, response):
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "ambiguous_answer"})
-    if len(expected) > MAX_MATH_TEXT_CHARS or len(response) > MAX_MATH_TEXT_CHARS:
+    if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
     if answer_format == "answer_line":
+        units, answer_order = _question_contract(question)
         prepared = _line_answers(expected, response, units, answer_order)
         if isinstance(prepared, Outcome):
             return prepared

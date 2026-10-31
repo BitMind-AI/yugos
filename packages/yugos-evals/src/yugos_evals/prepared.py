@@ -17,6 +17,8 @@ from inspect_ai.solver import generate, multiple_choice, prompt_template, system
 
 from yugos.inspect_engine import freeze_task
 
+_HUMANEVAL_GRADER_VERSION = 1
+
 # Explicit installed implementations; pack arguments cannot choose a Python import.
 _MODULES = {
     **{
@@ -184,9 +186,7 @@ def _grading_components(name: str, args: dict):
 
         return GRADER_VERSION, mbpp_with_imports()
     if name == "humaneval":
-        from .sources._sample_patches import HUMANEVAL_GRADER_VERSION
-
-        return HUMANEVAL_GRADER_VERSION, None
+        return _HUMANEVAL_GRADER_VERSION, None
     if name in {"simpleqa", "simpleqa_verified"} and args.get("scorer", "tool") == "tool":
         from inspect_evals.simpleqa.grader_templates import (
             SIMPLEQA_GRADER_TEMPLATE,
@@ -215,7 +215,7 @@ def _prepare_grading(task: Task, name: str, args: dict):
         return version
     if recorded is not None:
         raise ValueError(f"{name}: prepare a fresh task before changing its grader version")
-    from .sources._sample_patches import prepare_samples
+    from ._sample_patches import prepare_samples
 
     prepare_samples(task, name)
     if scorer is not None:

@@ -168,9 +168,11 @@ Contributor test instructions are in the [repository development guide](../../RE
 New MATH, HumanEval, MBPP and SimpleQA tool tasks record their benchmark-owned
 `grader_version` in the prepared recipe and task version. Each benchmark can
 advance independently. MATH uses the shared `math_answer_scorer` and bounded
-Math-Verify worker. Units and answer ordering are explicit sample metadata,
-not inferred from question wording. Reviewed sample edits verify their original
-fields and stop preparation if the pinned source data changes.
+Math-Verify worker. General answer-line rules recognize explicit requests for
+comma-separated roots, requested units, and count nouns; other lists retain
+their ordering. No item-specific grading hints are used. Reviewed HumanEval
+and MBPP data edits verify hashes of their original fields and stop preparation
+if the pinned source data changes.
 
 The `simpleqa_numeric_scorer` uses a Yugos-specific tool rubric with required
 answer extraction and rationale. Its results are not directly comparable with

@@ -57,8 +57,7 @@ def math_answer_scorer(answer_format: str = "auto") -> Scorer:
         if answer_format == "answer_line":
             options = {
                 "answer_format": answer_format,
-                "units": state.metadata.get("math_answer_units", ""),
-                "answer_order": state.metadata.get("math_answer_order", "auto"),
+                "question": state.input_text,
             }
         outcome = await anyio.to_thread.run_sync(
             partial(grade_math, target.text, state.output.completion, **options)

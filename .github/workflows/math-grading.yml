@@ -29,5 +29,5 @@ jobs:
         run: |
           .venv/bin/ruff check packages/yugos/src/yugos/inference/calls.py packages/yugos/tests/test_concurrent_calls.py
           .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/scorers/math.py packages/yugos-evals/src/yugos_evals/scorers/_math*.py packages/yugos-evals/src/yugos_evals/scorers/_outcome.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/math_worker_fixture.py
-          .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/scorers/mbpp.py packages/yugos-evals/src/yugos_evals/scorers/simpleqa.py packages/yugos-evals/src/yugos_evals/sources/_sample_patches.py packages/yugos-evals/tests/test_grading_corrections.py
+          .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/scorers/mbpp.py packages/yugos-evals/src/yugos_evals/scorers/simpleqa.py packages/yugos-evals/src/yugos_evals/_sample_patches.py packages/yugos-evals/tests/test_grading_corrections.py
           .venv/bin/ruff format --check packages/yugos-evals/src/yugos_evals/scorers/math.py packages/yugos-evals/src/yugos_evals/scorers/_math*.py packages/yugos-evals/src/yugos_evals/scorers/_outcome.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/math_worker_fixture.py

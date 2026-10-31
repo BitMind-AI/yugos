@@ -12,11 +12,11 @@ from inspect_ai import Task
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Target
 
+from yugos_evals._sample_patches import PATCHES
 from yugos_evals.prepared import _prepare_grading, build
 from yugos_evals.scorers.math import math_answer_scorer
 from yugos_evals.scorers.mbpp import mbpp_with_imports
 from yugos_evals.scorers.simpleqa import simpleqa_numeric_scorer
-from yugos_evals.sources._sample_patches import PATCHES
 
 FIXTURES = Path(__file__).with_name("fixtures")
 SAMPLES = json.loads((FIXTURES / "grading_samples.json").read_text())
@@ -26,7 +26,7 @@ def test_reviewed_math_equivalents_and_wrong_answers():
     score = math_answer_scorer(answer_format="answer_line")
     for line in (FIXTURES / "math_equivalence.jsonl").read_text().splitlines():
         case = json.loads(line)
-        state = task_state("ANSWER: " + case["answer"], metadata=case.get("metadata"))
+        state = task_state("ANSWER: " + case["answer"], input=case["problem"])
         assert anyio.run(score, state, Target(case["target"])).value == 1, case["id"]
     for gold, answer in [
         (r"\text{Sunday}", "not Sunday"),
@@ -43,10 +43,10 @@ def test_reviewed_math_equivalents_and_wrong_answers():
         ("4", "4 feet per second"),
         ("50%", "50"),
     ]:
-        state = task_state("ANSWER: " + answer, metadata={"math_answer_units": "inches per second"})
+        state = task_state("ANSWER: " + answer, input="Express your answer in inches per second.")
         assert anyio.run(score, state, Target(gold)).value == 0, (gold, answer)
     assert anyio.run(score, task_state("ANSWER: 0.5"), Target("50%")).value == 1
-    percent = task_state(r"ANSWER: 50\%", metadata={"math_answer_units": "%"})
+    percent = task_state(r"ANSWER: 50\%", input="Express your answer as a percentage.")
     assert anyio.run(score, percent, Target("50")).value == 1
     truncated = task_state("ANSWER: 42", stop_reason="max_tokens")
     assert anyio.run(score, truncated, Target("42")).value == 0
@@ -65,7 +65,50 @@ def test_reviewed_math_equivalents_and_wrong_answers():
     ],
 )
 def test_shared_math_handles_equivalent_parts_and_grouped_numbers(gold, answer, order, expected):
-    state = task_state("ANSWER: " + answer, metadata={"math_answer_order": order})
+    question = {
+        "unordered": "Enter the roots, separated by commas.",
+        "ordered": "Enter the roots in ascending order, separated by commas.",
+        "auto": "Compute.",
+    }[order]
+    state = task_state("ANSWER: " + answer, input=question)
+    assert (
+        anyio.run(math_answer_scorer(answer_format="answer_line"), state, Target(gold)).value
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "question,gold,answer,expected",
+    [
+        ("Enter the solutions, separated by commas.", r"2,\frac14", "0.25,2", 1),
+        ("Enter the roots in descending order, separated by commas.", "2,1", "1,2", 0),
+        ("Find the point's coordinates.", "(1,2,3)", "(3,2,1)", 0),
+        (
+            "A train moves in feet per second. Express the speed in meters per second?",
+            "4",
+            "4 meters per second",
+            1,
+        ),
+        (
+            "A train moves in feet per second. Express the speed in meters per second?",
+            "4",
+            "4 feet per second",
+            0,
+        ),
+        ("How many books must Ada buy?", "12", "12 books", 1),
+        ("How many of the books must Ada buy?", "12", "12 of", 0),
+        ("How many more books must Ada buy?", "12", "12 more", 0),
+        ("How many books must Ada buy?", "12", "12 marbles", 0),
+        ("Compute.", r"30^\circ,60^\circ", "30 degrees,60", 1),
+        ("Compute.", r"30^\circ,60^\circ", r"30,60^{\circ}", 1),
+        ("Compute.", r"30\text{degrees},60\text{degrees}", r"30^\circ,60 degrees", 1),
+        ("Compute.", r"30^\circ,60^\circ", "30 radians,60", 0),
+        ("Compute.", r"30^\circ,60^\circ", "60,30 degrees", 0),
+        ("Compute.", r"30^\circ,60^\circ", "30 degrees,61", 0),
+    ],
+)
+def test_math_rules_apply_to_new_questions_without_item_hints(question, gold, answer, expected):
+    state = task_state("ANSWER: " + answer, input=question)
     assert (
         anyio.run(math_answer_scorer(answer_format="answer_line"), state, Target(gold)).value
         == expected

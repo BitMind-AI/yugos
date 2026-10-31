@@ -63,44 +63,5 @@
         "test_list_str": "assert math.isclose(harmonic_sum(7), 2.5928571428571425, rel_tol=0.001)\nassert math.isclose(harmonic_sum(4), 2.083333333333333, rel_tol=0.001)\nassert math.isclose(harmonic_sum(19), 3.547739657143682, rel_tol=0.001)"
       }
     }
-  },
-  {
-    "task": "math",
-    "sample": {
-      "id": "math_98fed519",
-      "input": "One of the roots of\n\\[z^4 + az^3 + 5z^2 - iz - 6 = 0\\]is $2i,$ where $a$ is a complex number.  Enter the other three roots, separated by commas.",
-      "target": "1,-1,-3i",
-      "metadata": {
-        "level": "5",
-        "solution": "Since $2i$ is a root,\n\\[(2i)^4 + a(2i)^3 + 5(2i)^2 - i(2i) - 6 = 0.\\]Solving, we find $a = i,$ so the polynomial is\n\\[z^4 + iz^3 + 5z^2 - iz - 6 = 0.\\]We can take out a factor of $z - 2i,$ to get\n\\[(z - 2i)(z^3 + 3iz^2 - z - 3i) = 0.\\]We can check that $z = 1$ and $z = -1$ are solutions of the cubic, so we can take out factors of $z - 1$ and $z + 1,$ to get\n\\[(z - 2i)(z - 1)(z + 1)(z + 3i) = 0.\\]Therefore, the other roots are $\\boxed{1,-1,-3i}.$",
-        "subject": "intermediate algebra"
-      }
-    }
-  },
-  {
-    "task": "math",
-    "sample": {
-      "id": "math_b2cca4da",
-      "input": "A bicycle is traveling at 20 feet per minute. What is the bicycle's speed expressed in inches per second?",
-      "target": "4",
-      "metadata": {
-        "level": "4",
-        "solution": "There are $12$ inches in a foot, so the bicycle is traveling at $12(20)=240$ inches per minute.  There are $60$ seconds in a minute, so the bicycle is traveling at $\\frac{240}{60}=\\boxed{4}$ inches per second.",
-        "subject": "prealgebra"
-      }
-    }
-  },
-  {
-    "task": "math",
-    "sample": {
-      "id": "math_cb449b2b",
-      "input": "Max must take 10 steps to go the same distance as three of his dad's steps. His dad takes 30 steps to walk down the hall. How many steps must Max take to walk down the same hall?",
-      "target": "100",
-      "metadata": {
-        "level": "3",
-        "solution": "Using the given information, we have the ratio $10 \\text{ Max steps} : 3 \\text{ Dad steps}$. Multiplying both sides by $10$, we get the ratio $100 \\text{ Max steps} : 30 \\text{ Dad steps}$. Thus, $30$ of his dad's steps are the same as $\\boxed{100}$ of his steps.",
-        "subject": "prealgebra"
-      }
-    }
   }
 ]
