@@ -162,3 +162,25 @@ default is the official `python:3.12-slim` index; pass
 3.11+ and the standard library. A `local` sandbox is refused.
 
 Contributor test instructions are in the [repository development guide](../../README.md#development).
+
+### Grader versions
+
+New MATH, HumanEval, MBPP and SimpleQA tool tasks record their benchmark-owned
+`grader_version` in the prepared recipe and task version. Each benchmark can
+advance independently. MATH uses the shared `math_answer_scorer` and bounded
+Math-Verify worker. General answer-line rules recognize explicit requests for
+comma-separated roots, requested units, and count nouns; other lists retain
+their ordering. No item-specific grading hints are used. Reviewed HumanEval
+and MBPP data edits verify hashes of their original fields and stop preparation
+if the pinned source data changes.
+
+The `simpleqa_numeric_scorer` uses a Yugos-specific tool rubric with required
+answer extraction and rationale. Its results are not directly comparable with
+the upstream tool scorer. Numeric checks use the reference's last significant
+digit; unsupported formats retain the judge verdict and record
+`numeric_check: judge_fallback`. The explicit `original` scorer retains the
+paper contract.
+
+Frozen recipes without a grader version use the original native graders.
+Restoration preserves their samples and task version. To adopt updated prompts,
+tests or grading, prepare a new pack and recalibrate it; retain prior results.

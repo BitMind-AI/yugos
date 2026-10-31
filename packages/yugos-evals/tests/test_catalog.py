@@ -77,7 +77,7 @@ def test_supported_tasks_resolve_and_accept_their_settings(benchmark):
         ),
         ("humaneval", "math_code", "inspect_evals/humaneval", None, {}),
         ("mbpp", "math_code", "inspect_evals/mbpp", None, {}),
-        ("math", "math_code", "inspect_evals/math", "expression_exact_match", {}),
+        ("math", "math_code", "inspect_evals/math", "math_answer_scorer", {}),
         (
             "tau2_banking",
             "agentic",

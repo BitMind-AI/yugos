@@ -1,0 +1,43 @@
+{"id": "auto:math:math_152eb858", "problem": "Compute the answer.", "target": "2.2", "answer": "\\(\\frac{11}{5}\\)"}
+{"id": "auto:math:math_2b3c488f", "problem": "Compute the answer.", "target": "\\frac{1}{8}", "answer": "\\(\\frac{1}{8}\\)"}
+{"id": "auto:math:math_4380d40e", "problem": "Compute the answer.", "target": "69\\text{ degrees}", "answer": "\\(69^\\circ\\)"}
+{"id": "auto:math:math_55de176e", "problem": "Compute the answer.", "target": "\\begin{pmatrix} 1 & 2 \\\\ 6 & -1 \\end{pmatrix}", "answer": "\\(\\begin{pmatrix}1&2\\\\6&-1\\end{pmatrix}\\)"}
+{"id": "auto:math:math_5fa06eec", "problem": "Compute the answer.", "target": "\\begin{pmatrix} 8 & 12 \\\\ -4 & 20 \\end{pmatrix}", "answer": "\\(\\begin{pmatrix}8&12\\\\-4&20\\end{pmatrix}\\)"}
+{"id": "auto:math:math_617a9f05", "problem": "Compute the answer.", "target": "5+6\\sqrt{2}", "answer": "\\(5 + 6\\sqrt{2}\\)"}
+{"id": "auto:math:math_68e4d0b7", "problem": "Compute the answer.", "target": "371,\\!043,\\!400", "answer": "371043400"}
+{"id": "auto:math:math_6bed9763", "problem": "Compute the answer.", "target": "(-\\infty,0]", "answer": "\\((-\\infty,0]\\)"}
+{"id": "auto:math:math_741b6391", "problem": "Compute the answer.", "target": "\\text{Sunday}", "answer": "Sunday"}
+{"id": "auto:math:math_77cf59d7", "problem": "Compute the answer.", "target": "1200_7", "answer": "\\(1200_7\\)"}
+{"id": "auto:math:math_9249f218", "problem": "Compute the answer.", "target": "\\frac78", "answer": "\\(\\frac{7}{8}\\)"}
+{"id": "auto:math:math_9528aad2", "problem": "Compute the answer.", "target": "\\frac{21}{2}\\pi", "answer": "$\\frac{21\\pi}{2}$"}
+{"id": "auto:math:math_98fed519", "problem": "Enter the other three roots, separated by commas.", "target": "1,-1,-3i", "answer": "-3i, 1, -1"}
+{"id": "auto:math:math_9f1afbe7", "problem": "Compute the answer.", "target": "\\frac{2}{3}", "answer": "\\(\\frac{2}{3}\\)"}
+{"id": "auto:math:math_a06c286b", "problem": "Compute the answer.", "target": "3 + 2 \\sqrt{2}", "answer": "\\(3+2\\sqrt{2}\\)"}
+{"id": "auto:math:math_ae626664", "problem": "Compute the answer.", "target": "\\text{A,D}", "answer": "A,D"}
+{"id": "auto:math:math_b1cf95b7", "problem": "Compute the answer.", "target": "\\frac{1}{18}", "answer": "\\(\\frac{1}{18}\\)"}
+{"id": "auto:math:math_cf4e66fb", "problem": "Compute the answer.", "target": "\\frac{1}{5}", "answer": "\\(\\frac{1}{5}\\)"}
+{"id": "auto:math:math_d29bbad6", "problem": "Compute the answer.", "target": "\\begin{pmatrix} 0 & -15 \\\\ -2 & -4 \\end{pmatrix}", "answer": "\\begin{pmatrix}0&-15\\\\-2&-4\\end{pmatrix}"}
+{"id": "auto:math:math_d9091621", "problem": "Find the point of intersection.", "target": "\\begin{pmatrix} 11 \\\\ -13 \\\\ -1 \\end{pmatrix}", "answer": "(11,-13,-1)"}
+{"id": "auto:math:math_e5b7f870", "problem": "Compute the answer.", "target": "\\text{parabola}", "answer": "parabola"}
+{"id": "auto:math:math_fdf4e77b", "problem": "Compute the answer.", "target": "27^\\circ, 63^\\circ, 99^\\circ, 135^\\circ, 171^\\circ", "answer": "\\(27^\\circ, 63^\\circ, 99^\\circ, 135^\\circ, 171^\\circ\\)"}
+{"id": "auto:math:math_ff1634e6", "problem": "Compute the answer.", "target": "\\frac35", "answer": "\\(\\frac{3}{5}\\)"}
+{"id": "auto:math:math_ffd259d1", "problem": "Compute the answer.", "target": "\\frac{1}{11}", "answer": "\\(\\frac{1}{11}\\)"}
+{"id": "jev:math:math_10f372e1", "problem": "Compute the answer.", "target": "(8,3,-1)", "answer": "\\((8,3,-1)\\)"}
+{"id": "jev:math:math_152eb858", "problem": "Compute the answer.", "target": "2.2", "answer": "\\(\\frac{11}{5}\\)"}
+{"id": "jev:math:math_18885734", "problem": "Compute the answer.", "target": "(-\\infty, -2] \\cup [2, \\infty)", "answer": "\\((-\\infty,-2]\\cup[2,\\infty)\\)"}
+{"id": "jev:math:math_1b05b889", "problem": "Compute the answer.", "target": "60^\\circ", "answer": "\\(60^\\circ\\)"}
+{"id": "jev:math:math_2da62ef5", "problem": "Compute the answer.", "target": "-\\frac12", "answer": "\\(-\\frac12\\)"}
+{"id": "jev:math:math_4d8632a9", "problem": "Compute the answer.", "target": "\\frac{2}{5}", "answer": "\\(\\frac{2}{5}\\)"}
+{"id": "jev:math:math_55de176e", "problem": "Compute the answer.", "target": "\\begin{pmatrix} 1 & 2 \\\\ 6 & -1 \\end{pmatrix}", "answer": "$\\begin{pmatrix}1&2\\\\6&-1\\end{pmatrix}$"}
+{"id": "jev:math:math_617a9f05", "problem": "Compute the answer.", "target": "5+6\\sqrt{2}", "answer": "\\(5+6\\sqrt{2}\\)"}
+{"id": "jev:math:math_68e4d0b7", "problem": "Compute the answer.", "target": "371,\\!043,\\!400", "answer": "371043400"}
+{"id": "jev:math:math_741b6391", "problem": "Compute the answer.", "target": "\\text{Sunday}", "answer": "Sunday"}
+{"id": "jev:math:math_9528aad2", "problem": "Compute the answer.", "target": "\\frac{21}{2}\\pi", "answer": "\\frac{21\\pi}{2}"}
+{"id": "jev:math:math_98fed519", "problem": "Enter the other three roots, separated by commas.", "target": "1,-1,-3i", "answer": "\\(1, -1, -3i\\)"}
+{"id": "jev:math:math_ae626664", "problem": "Compute the answer.", "target": "\\text{A,D}", "answer": "A, D"}
+{"id": "jev:math:math_b2cca4da", "problem": "A bicycle is traveling at 20 feet per minute. What is its speed expressed in inches per second?", "target": "4", "answer": "4 inches per second"}
+{"id": "jev:math:math_c32c2603", "problem": "Compute the answer.", "target": "10", "answer": "\\(10\\)"}
+{"id": "jev:math:math_cb449b2b", "problem": "How many steps must Max take to walk down the same hall?", "target": "100", "answer": "100 steps"}
+{"id": "jev:math:math_cf4e66fb", "problem": "Compute the answer.", "target": "\\frac{1}{5}", "answer": "\\(\\frac{1}{5}\\)"}
+{"id": "jev:math:math_e5b7f870", "problem": "Compute the answer.", "target": "\\text{parabola}", "answer": "parabola"}
+{"id": "jev:math:math_fdf4e77b", "problem": "Compute the answer.", "target": "27^\\circ, 63^\\circ, 99^\\circ, 135^\\circ, 171^\\circ", "answer": "\\(27^\\circ, 63^\\circ, 99^\\circ, 135^\\circ, 171^\\circ\\)"}

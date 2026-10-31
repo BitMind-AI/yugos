@@ -27,7 +27,9 @@ def main():
         from ._math_compare import grade_math, reference_exclusion
 
         if request["operation"] == "grade":
-            result = asdict(grade_math(request["gold"], request["text"]))
+            result = asdict(
+                grade_math(request["gold"], request["text"], **request.get("options", {}))
+            )
         elif request["operation"] == "reference":
             result = reference_exclusion(request["gold"])
         else:

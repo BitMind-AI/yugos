@@ -16,12 +16,14 @@ class MathWorkerFailed(Exception):
         super().__init__(cause)
 
 
-def compare(operation: str, gold: str, text: str = ""):
+def compare(operation: str, gold: str, text: str = "", **options):
     """Reap a slow or crashed worker; never turn its missing answer into a zero."""
     try:
         result = subprocess.run(
             [sys.executable, "-m", WORKER_MODULE],
-            input=json.dumps({"operation": operation, "gold": gold, "text": text}),
+            input=json.dumps(
+                {"operation": operation, "gold": gold, "text": text, "options": options}
+            ),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,

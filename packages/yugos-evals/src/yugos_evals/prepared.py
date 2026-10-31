@@ -17,6 +17,8 @@ from inspect_ai.solver import generate, multiple_choice, prompt_template, system
 
 from yugos.inspect_engine import freeze_task
 
+_HUMANEVAL_GRADER_VERSION = 1
+
 # Explicit installed implementations; pack arguments cannot choose a Python import.
 _MODULES = {
     **{
@@ -159,19 +161,68 @@ def prepare_task(task: Task, **options):
 
         task.scorer = [bigcodebench_scorer()]
         task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
-    if name == "inspect_evals/math":
-        # Upstream also builds a model equivalence scorer. Inspect would run it,
-        # sending the gold target to the model under evaluation. Keep the
-        # deterministic exact-match scorer on this task object too.
-        module = importlib.import_module(_MODULES[name])
-        task.scorer = [module.expression_exact_match()]
+    grader_version = _prepare_grading(task, name.split("/")[1], args)
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
         origin={"task": name, "args": args},
-        builder_args={"task": name, "args": args, "fewshot_samples": fewshot_samples},
+        builder_args={
+            "task": name,
+            "args": args,
+            "fewshot_samples": fewshot_samples,
+            **({"grader_version": grader_version} if grader_version is not None else {}),
+        },
         **options,
     )
+
+
+def _grading_components(name: str, args: dict):
+    if name == "math":
+        from .scorers.math import GRADER_VERSION, math_answer_scorer
+
+        return GRADER_VERSION, math_answer_scorer(answer_format="answer_line")
+    if name == "mbpp":
+        from .scorers.mbpp import GRADER_VERSION, mbpp_with_imports
+
+        return GRADER_VERSION, mbpp_with_imports()
+    if name == "humaneval":
+        return _HUMANEVAL_GRADER_VERSION, None
+    if name in {"simpleqa", "simpleqa_verified"} and args.get("scorer", "tool") == "tool":
+        from inspect_evals.simpleqa.grader_templates import (
+            SIMPLEQA_GRADER_TEMPLATE,
+            SIMPLEQA_VERIFIED_GRADER_TEMPLATE,
+        )
+
+        from .scorers.simpleqa import GRADER_VERSION, simpleqa_numeric_scorer
+
+        template = (
+            SIMPLEQA_VERIFIED_GRADER_TEMPLATE
+            if name.endswith("verified")
+            else SIMPLEQA_GRADER_TEMPLATE
+        )
+        return GRADER_VERSION, simpleqa_numeric_scorer(template)
+    return None
+
+
+def _prepare_grading(task: Task, name: str, args: dict):
+    """Select the benchmark-owned grader version and apply reviewed source data once."""
+    components = _grading_components(name, args)
+    if components is None:
+        return None
+    version, scorer = components
+    recorded = (task.metadata or {}).get("grader_version")
+    if recorded == version:
+        return version
+    if recorded is not None:
+        raise ValueError(f"{name}: prepare a fresh task before changing its grader version")
+    from ._sample_patches import prepare_samples
+
+    prepare_samples(task, name)
+    if scorer is not None:
+        task.scorer = [scorer]
+    task.metadata = {**(task.metadata or {}), "grader_version": version}
+    task.version = f"{task.version}+yugos-{name}.{version}"
+    return version
 
 
 def _mbpp_template(task: Task) -> str:
@@ -187,7 +238,14 @@ def _mbpp_template(task: Task) -> str:
     return templates[0]
 
 
-def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] = ()) -> Task:
+def build(
+    *,
+    options: dict,
+    task: str,
+    args: dict,
+    fewshot_samples: list[dict] = (),
+    grader_version: int = 0,
+) -> Task:
     """Build native solvers, agents, tools and scorers without calling source factories."""
     if task not in _MODULES:
         raise ValueError(f"unknown prepared task: {task}")
@@ -434,4 +492,9 @@ def build(*, options: dict, task: str, args: dict, fewshot_samples: list[dict] =
         scorer = module.math_answer_scorer()
     if metrics is not None:
         options = {**options, "metrics": metrics}
+    if grader_version:
+        components = _grading_components(name, args)
+        if components is None or components[0] != grader_version:
+            raise ValueError(f"unsupported {name} grader version: {grader_version}")
+        scorer = components[1] or scorer
     return Task(**options, solver=solver, scorer=scorer, setup=setup)
