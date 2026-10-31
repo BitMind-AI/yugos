@@ -162,7 +162,7 @@ def _question_contract(question: str) -> tuple[str, str]:
     roots = re.search(r"\b(?:roots|solutions)\b[^.?!\n]*\bseparated by commas\b", question, re.I)
     order = "ordered" if ordered else "unordered" if roots else "auto"
     explicit_units = re.search(
-        r"\bexpress(?:ed|\s+(?:your|the)\s+[a-z]+)?\s+in\s+"
+        r"\bexpress(?:ed|\s+(?:your|the)\s+(?:final\s+)?[a-z]+)?\s+in\s+"
         r"([a-z]+(?:\s+per\s+[a-z]+)?)\s*[?.]",
         question,
         re.I,
@@ -186,8 +186,8 @@ def _strip_answer_units(value: str, units: str) -> str:
     suffix = r"(?:\\text\{\s*" + re.escape(units) + r"\s*\}|" + re.escape(units) + r")\s*$"
     if units == "degrees":
         suffix = r"(?:\^\{?\\circ\}?|" + suffix + r")\s*$"
-    elif units == "%":
-        suffix = r"\\?%\s*$"
+    elif units in {"%", "percent", "percentage"}:
+        suffix = r"(?:\\?%|\\text\{\s*percent(?:age)?\s*\}|percent(?:age)?)\s*$"
     return ",".join(
         re.sub(suffix, "", part.strip(), flags=re.I).strip() for part in _comma_parts(value)
     )
