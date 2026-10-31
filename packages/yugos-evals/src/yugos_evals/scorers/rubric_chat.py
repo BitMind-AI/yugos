@@ -16,7 +16,7 @@ from inspect_ai.solver import TaskState
 
 from yugos.evaluation.grades import GradeCode
 
-from ._outcome import Outcome, completion_gate, to_score
+from ._outcome import Outcome, completion_gate, empty_answer, to_score
 
 # A choice answer is its own line: "Answer: C", optionally with trailing
 # punctuation. Isolated letters, option lists, and the word "answer" in
@@ -43,7 +43,7 @@ def grade_rubric_chat(gold: str, completion: str, metadata: dict | None) -> Outc
     if not expected:
         return Outcome(GradeCode.INVALID_GOLD, status="unavailable")
     if not response.strip():
-        return Outcome(GradeCode.NOT_ATTEMPTED)
+        return empty_answer()
     kind = (metadata or {}).get("format") or "exact"
     if kind == "exact":
         if _norm(response) == _norm(expected):

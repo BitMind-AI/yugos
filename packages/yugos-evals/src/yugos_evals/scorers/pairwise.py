@@ -138,13 +138,6 @@ def pairwise_judge_scorer(judge_model: str | None = None) -> Scorer:
         if gated is not None:
             return to_score(gated)
         candidate = state.output.completion
-        if not candidate.strip():
-            return to_score(
-                Outcome(
-                    GradeCode.INCORRECT,
-                    details={"cause": "empty_answer"},
-                )
-            )
         judge = grader_model(judge_model)
         verdicts = []
         for round in (1, 2):

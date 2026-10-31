@@ -265,9 +265,9 @@ def test_choice_marker_ignores_incidental_letters():
     tight = grade("B", "Answer:B!")
     assert tight.code == GradeCode.CORRECT and tight.score == 1.0
     empty = grade("A", "")
-    assert empty.code == GradeCode.NOT_ATTEMPTED
+    assert empty.code == GradeCode.INCORRECT and empty.details["cause"] == "empty_answer"
     blank = grade("A", " \n\t")
-    assert blank.code == GradeCode.NOT_ATTEMPTED
+    assert blank.code == GradeCode.INCORRECT and blank.details["cause"] == "empty_answer"
 
 
 def test_exact_and_rubric_graders_reject_near_miss_prose():
@@ -285,8 +285,8 @@ def test_exact_and_rubric_graders_reject_near_miss_prose():
     for near in ("cartons=40", "cartons = 4", "notremaining=19", "see cartons"):
         outcome = grade_rubric_chat("unused", near, meta)
         assert outcome.code == GradeCode.INCORRECT and outcome.score == 0.0, near
-    assert grade_rubric_chat("42", "", {"format": "exact"}).code == GradeCode.NOT_ATTEMPTED
-    assert grade_rubric_chat("unused", "", meta).code == GradeCode.NOT_ATTEMPTED
+    assert grade_rubric_chat("42", "", {"format": "exact"}).code == GradeCode.INCORRECT
+    assert grade_rubric_chat("unused", "", meta).code == GradeCode.INCORRECT
 
 
 def test_restored_grader_matches_the_stand_in_scores(built):
