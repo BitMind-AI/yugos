@@ -19,7 +19,9 @@ from yugos.inspect_engine import measure_log
 from yugos.inspect_engine.frozen import restore_tasks
 
 
-def test_upstream_choice_task_config_roundtrips_and_scores_without_native_grading(tmp_path, monkeypatch):
+def test_upstream_choice_task_config_roundtrips_and_scores_without_native_grading(
+    tmp_path, monkeypatch
+):
     import importlib
 
     module = importlib.import_module("inspect_evals.mmlu_pro.mmlu_pro")
@@ -190,6 +192,69 @@ def test_display_fields_cannot_diverge_from_the_executable_sample():
         restore_tasks([q.model_copy(update={"expected_answer": "changed"})])
 
 
+def _sandbox_questions():
+    from inspect_ai.util import ComposeConfig, SandboxEnvironmentSpec
+
+    questions = []
+    for i in (1, 2):
+        sandbox = SandboxEnvironmentSpec(
+            "modal",
+            ComposeConfig.model_validate(
+                {
+                    "services": {"default": {"image": f"fixture/task-{i}@sha256:" + str(i) * 64}},
+                    "x-modal": {"block_network": True},
+                }
+            ),
+        )
+        questions.extend(
+            freeze_task(
+                Task(
+                    name="fixture",
+                    dataset=[Sample(id=str(i), input=str(i), target="a", sandbox=sandbox)],
+                    solver=generate(),
+                    scorer=exact(),
+                    sandbox=sandbox,
+                ),
+                source="s",
+                workload_class="agentic",
+            )
+        )
+    return questions
+
+
+def test_redundant_sandbox_batching_preserves_frozen_samples():
+    from yugos.competition.difficulty import question_identity
+
+    questions = _sandbox_questions()
+    original = [q.model_dump_json() for q in questions]
+    [(task, definition)] = restore_tasks(questions)
+    assert task.sandbox is None and definition.sandbox is None
+    assert [sample.id for sample in task.dataset] == [q.question_id for q in questions]
+    for sample, question in zip(task.dataset, questions, strict=True):
+        assert sample.sandbox.model_dump(mode="json") == question.inspect_sample["sandbox"]
+        assert sample.metadata["yugos_question_sha256"] == question_identity(question)
+    assert [q.model_dump_json() for q in questions] == original
+
+
+@pytest.mark.parametrize("change", ["missing", "different", "limits", "unqualified"])
+def test_batching_never_discards_a_required_default_or_different_recipe(change):
+    questions = _sandbox_questions()
+    if change == "missing":
+        questions[1].inspect_sample["sandbox"] = None
+    elif change == "different":
+        questions[1].inspect_sample["sandbox"] = questions[0].inspect_sample["sandbox"]
+    elif change == "limits":
+        questions[1].inspect_task["working_limit"] = 17
+    else:
+        questions[1].inspect_task["sandbox"]["config"]["services"]["default"]["image"] = (
+            "fixture:latest"
+        )
+        with pytest.raises(ValueError, match="digest-pinned"):
+            restore_tasks(questions)
+        return
+    assert len(restore_tasks(questions)) == 2
+
+
 def test_ifeval_positional_arguments_survive_json_without_reimplementing_checks(
     tmp_path, monkeypatch
 ):
@@ -293,7 +358,9 @@ def test_evaluation_identity_commits_to_task_configs_and_pins_not_samples_or_sou
     assert evaluation_identity(rescored)["recipes_sha256"] != identity["recipes_sha256"]
     limited = task_config.model_copy(update={"message_limit": 3})
     assert evaluation_identity([limited])["recipes_sha256"] != identity["recipes_sha256"]
-    repinned = task_config.model_copy(update={"packages": {**task_config.packages, "inspect-evals": "0.0.1"}})
+    repinned = task_config.model_copy(
+        update={"packages": {**task_config.packages, "inspect-evals": "0.0.1"}}
+    )
     changed = evaluation_identity([repinned])
     assert changed["packages"]["inspect-evals"] == "0.0.1"
     assert changed["recipes_sha256"] != identity["recipes_sha256"]
