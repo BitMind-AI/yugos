@@ -25,6 +25,7 @@ from contextlib import ExitStack, redirect_stdout
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from decimal import Decimal
+from os import urandom as _transport_urandom
 from subprocess import Popen as _transport_popen
 
 import rpyc
@@ -1369,7 +1370,7 @@ def run(request):
         conn.deadline = deadline
         conn.timeout_callback = mark_timeout
         conn.fixtures = fixtures
-        conn.value_tag = os.urandom(32).hex()
+        conn.value_tag = _transport_urandom(32).hex()
         last_connection = conn
         conn._config["allow_getattr"] = True
         conn._config["allow_safe_attrs"] = True

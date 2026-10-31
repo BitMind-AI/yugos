@@ -25,6 +25,31 @@ TESTS = (
 
 
 @pytest.mark.parametrize("correct", [True, False])
+def test_random_fixture_does_not_supply_the_transport_nonce(correct):
+    candidate = (
+        "import os\ndef task_func(): return os.urandom(7)"
+        if correct
+        else "def task_func(): return b'wrong'"
+    )
+    tests = """
+import unittest
+from unittest.mock import patch
+class TestCases(unittest.TestCase):
+    @patch('os.urandom')
+    def test_random_bytes(self, random_bytes):
+        def expected(size):
+            assert size == 7
+            return b'fixture'
+        random_bytes.side_effect = expected
+        self.assertEqual(task_func(), b'fixture')
+        random_bytes.assert_called_once_with(7)
+"""
+    report = _run(candidate, tests=tests, timeout_s=10)
+    assert report["passed"] is correct
+    assert report["cause"] == ("all_pass" if correct else "test_failure")
+
+
+@pytest.mark.parametrize("correct", [True, False])
 def test_test_imports_restore_submodules_with_python_from_import_semantics(correct):
     candidate = (
         "def task_func(): return mock.Mock(return_value=17)()"
