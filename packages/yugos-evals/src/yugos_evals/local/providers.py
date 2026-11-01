@@ -160,7 +160,8 @@ class LocalProviderClient:
         limits = self._limits(request)
         prices = self.card.prices[request.model.provider_id, request.model.model_id]
         wire = request.input.model_dump(mode="json", exclude_none=True)
-        output_tokens = request.max_output_tokens or limits.max_output_tokens
+        # A requested cap does not bound billed output on every provider.
+        output_tokens = limits.max_output_tokens
         return reservation_microusd(prices, limits.input_tokens(wire), output_tokens) / 1_000_000
 
     def complete(self, request: ModelRequest) -> ModelResponse:
