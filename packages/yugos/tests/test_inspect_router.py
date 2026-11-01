@@ -8,9 +8,10 @@ pytest.importorskip("inspect_ai")
 
 from inspect_ai import Task  # noqa: E402
 from inspect_ai.dataset import MemoryDataset, Sample  # noqa: E402
-from inspect_ai.model import GenerateConfig, RetryDecision  # noqa: E402
+from inspect_ai.log import read_eval_log  # noqa: E402
+from inspect_ai.model import GenerateConfig, ModelOutput, RetryDecision  # noqa: E402
 from inspect_ai.scorer import includes  # noqa: E402
-from inspect_ai.solver import generate, use_tools  # noqa: E402
+from inspect_ai.solver import generate, solver, use_tools  # noqa: E402
 from inspect_ai.tool import tool  # noqa: E402
 from inspect_fakes import ScriptedRouter, exact_question, pack_task, reply, run  # noqa: E402
 
@@ -18,11 +19,14 @@ from yugos.inspect_engine import (  # noqa: E402
     JsonlReceipts,
     MemoryReceipts,
     ProviderReceipt,
+    QuestionError,
     RouterError,
     RouterReply,
     RouterToolCall,
     RouterUnavailable,
+    RunError,
     measure_log,
+    question_failure,
     router_model,
     run_competition_eval,
     versions,
@@ -134,6 +138,69 @@ def test_only_infrastructure_unavailability_is_retried():
     assert isinstance(decision, RetryDecision) and decision.retry
     assert api.should_retry(RouterError("router crashed")) is False
     assert api.should_retry(TimeoutError()) is False
+
+
+def test_question_failure_handlers_can_specialize_or_explicitly_abort():
+    with pytest.raises(QuestionError, match="LookupError: new provider error") as caught:
+        with question_failure():
+            raise LookupError("new provider error")
+    assert isinstance(caught.value.__cause__, LookupError)
+
+    with pytest.raises(RouterError, match="known submission fault"):
+        with question_failure(lambda exc: RouterError("known submission fault")):
+            raise ValueError("known error")
+
+    def fatal(exc):
+        raise exc
+
+    with pytest.raises(OSError, match="journal unavailable"):
+        with question_failure(fatal):
+            raise OSError("journal unavailable")
+    with pytest.raises(KeyboardInterrupt):
+        with question_failure():
+            raise KeyboardInterrupt
+    with pytest.raises(RunError):
+        with question_failure():
+            raise RunError("shared protocol is inconsistent")
+
+
+def test_swallowed_question_failure_cannot_be_scored_or_dispatch_again(tmp_path):
+    calls = []
+
+    async def client(call):
+        calls.append(call.scope.sample_id)
+        with question_failure():
+            if call.scope.sample_id == "broken":
+                raise LookupError("unfamiliar callback failure")
+            return reply("yes")
+
+    @solver
+    def swallowing_solver():
+        async def solve(state, generate):
+            for _ in range(2 if state.sample_id == "broken" else 1):
+                try:
+                    await generate(state)
+                except Exception:
+                    state.output = ModelOutput.from_content("fixture", "yes")
+            return state
+
+        return solve
+
+    task = pack_task(
+        [exact_question("broken", "yes"), exact_question("healthy", "yes")], name="pack"
+    )
+    task.solver = swallowing_solver()
+    log = run_competition_eval(
+        task, router_model(client, submission_id="sub"), log_dir=str(tmp_path), display="none"
+    )
+    assert calls.count("broken") == calls.count("healthy") == 1
+    # Reloading the log must retain the failure even though the solver swallowed it.
+    rows = {
+        row.measurement.question_id: row for row in measure_log(read_eval_log(log.location), [])
+    }
+    assert rows["broken"].failure_owner == "infrastructure"
+    assert rows["broken"].grade is None and rows["broken"].measurement.outcome.unrealized
+    assert rows["healthy"].grade.score == 1
 
 
 def test_submissions_do_not_share_a_connection_pool():

@@ -22,7 +22,7 @@ from yugos.evaluation.measurements import Outcome, QuestionMeasurement, Workload
 from yugos.spend import KnownSpend, OpenReservation
 
 from .receipts import ProviderReceipt, receipts_by_sample
-from .router_model import ROUTER_FAILURE_KEY
+from .router_model import QUESTION_FAILURE_KEY, ROUTER_FAILURE_KEY
 
 # Limits that are Yugos deadlines rather than task rules; hitting one is a non-answer.
 _DEADLINE_LIMITS = frozenset({"time", "working", "cost"})
@@ -43,6 +43,7 @@ class SampleMeasurement:
     # Pre-scoring working time, the category execution time this sample contributes.
     active_ns: int | None
     failure_owner: Literal["submission", "infrastructure"] | None
+    error: str | None = None
 
 
 def active_seconds(sample: EvalSample) -> float:
@@ -146,9 +147,13 @@ def _unscored_grade(
 
 
 def _failure(sample: EvalSample) -> Literal["submission", "infrastructure"] | None:
+    if QUESTION_FAILURE_KEY in sample.store:
+        return "infrastructure"
+    if ROUTER_FAILURE_KEY in sample.store:
+        return "submission"
     if sample.error is None:
         return None
-    return "submission" if ROUTER_FAILURE_KEY in sample.store else "infrastructure"
+    return "infrastructure"
 
 
 def _grade_rule(sample: EvalSample, grade: GradingResult | None, owner: str | None) -> str:
@@ -166,6 +171,7 @@ def measure_log(
     receipts: Iterable[ProviderReceipt],
     *,
     scorer: str | None = None,
+    isolate_errors: bool = False,
 ) -> tuple[SampleMeasurement, ...]:
     """Measure each logged sample with receipt spend and pre-scoring time.
 
@@ -176,6 +182,8 @@ def measure_log(
     decides it first (see
     `_unscored_grade`). Restored frozen samples carry their workload labels,
     source identity, authoritative scorer and optional scalar score key.
+    Execution hosts may isolate malformed grades as incomplete questions;
+    attribution and receipt-integrity errors always propagate.
     """
     samples = log.samples or []
     if any(sample.epoch != 1 for sample in samples):
@@ -191,8 +199,6 @@ def measure_log(
         category = metadata.get("workload_class")
         if not category:
             raise ValueError(f"sample {sample.id} has no workload class")
-        score = _selected_score(sample, scorer or metadata.get("yugos_scorer"))
-        value = _score_value(score, metadata.get("yugos_score_key"))
         owner = _failure(sample)
         output = sample.output
         finish = (
@@ -204,23 +210,35 @@ def measure_log(
         )
         deadline = sample.limit is not None and sample.limit.type in _DEADLINE_LIMITS
         grade = None
-        if score is not None:
-            grader = scorer or metadata.get("yugos_scorer") or next(iter(sample.scores))
-            if value is None:
-                grade = _unscored_grade(
-                    score,
-                    grader,
-                    truncated=finish == "length",
-                    router_failed=owner is not None or deadline,
-                )
-                value = 0.0
-            else:
-                grade = GradingResult(
-                    score=value,
-                    grader=grader,
-                    code=GradeCode.CORRECT if value > 0 else GradeCode.INCORRECT,
-                    details={"inspect_score": score.model_dump(mode="json")},
-                )
+        try:
+            score = (
+                None
+                if owner is not None
+                else _selected_score(sample, scorer or metadata.get("yugos_scorer"))
+            )
+            value = _score_value(score, metadata.get("yugos_score_key"))
+            if score is not None:
+                grader = scorer or metadata.get("yugos_scorer") or next(iter(sample.scores))
+                if value is None:
+                    grade = _unscored_grade(
+                        score,
+                        grader,
+                        truncated=finish == "length",
+                        router_failed=owner is not None or deadline,
+                    )
+                    value = 0.0
+                else:
+                    grade = GradingResult(
+                        score=value,
+                        grader=grader,
+                        code=GradeCode.CORRECT if value > 0 else GradeCode.INCORRECT,
+                        details={"inspect_score": score.model_dump(mode="json")},
+                    )
+        except Exception as exc:
+            if not isolate_errors:
+                raise
+            sample.store[QUESTION_FAILURE_KEY] = f"{type(exc).__name__}: {exc}"
+            value, grade, owner = 0.0, None, "infrastructure"
         with localcontext() as context:
             context.prec = PRECISION
             cost = sum((r.cost_usd for r in spend.get(sample.uuid, ())), Decimal(0))
@@ -252,6 +270,11 @@ def measure_log(
                 spend_usd=cost,
                 active_ns=round(active * 1_000_000_000),
                 failure_owner=owner,
+                error=sample.error.message
+                if sample.error
+                else (
+                    sample.store.get(QUESTION_FAILURE_KEY) or sample.store.get(ROUTER_FAILURE_KEY)
+                ),
             )
         )
     return tuple(rows)
@@ -269,6 +292,7 @@ def category_measurements_from_log(
     integrity_pass: bool,
     open_reservations: Sequence[Decimal] = (),
     scorer: str | None = None,
+    isolate_errors: bool = False,
 ) -> tuple[CategoryMeasurement, ...]:
     """Category evidence for `yugos.competition`, from one submission's Inspect log.
 
@@ -292,6 +316,7 @@ def category_measurements_from_log(
             current,
             [r for r in receipts if r.sample_uuid in {s.uuid for s in current.samples or ()}],
             scorer=scorer,
+            isolate_errors=isolate_errors,
         )
     ]
     if len({row.measurement.question_id for row in measured}) != len(measured):

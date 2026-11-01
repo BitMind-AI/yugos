@@ -14,6 +14,7 @@ import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -50,6 +51,7 @@ require_pinned_inspect()
 API_NAME = "yugos-router"
 # Sample-store key recording a failure the submission owns (see RouterError).
 ROUTER_FAILURE_KEY = "yugos.router_failure"
+QUESTION_FAILURE_KEY = "yugos.question_failure"
 
 
 class RouterCall(BaseModel):
@@ -91,6 +93,14 @@ class RouterError(RuntimeError):
     """The submission failed this call. The sample errors and scores zero; never retried."""
 
 
+class QuestionError(RuntimeError):
+    """This question is incomplete; unrelated questions may continue without retrying it."""
+
+
+class RunError(RuntimeError):
+    """Shared execution is unusable; the host must stop new admissions."""
+
+
 class RouterUnavailable(RuntimeError):
     """Operator infrastructure failed before the router made any provider call.
 
@@ -101,6 +111,29 @@ class RouterUnavailable(RuntimeError):
     def __init__(self, message: str, *, retry_after: float | None = None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+
+
+@contextmanager
+def question_failure(handler: Callable[[Exception], Exception | None] | None = None):
+    """Contain unfamiliar question errors; hosts handle known or fatal failures explicitly.
+
+    A handler may return a specific question/limit/retry exception, or raise a
+    fatal error after stopping shared admission. Returning None uses the default
+    incomplete-question outcome. Cancellation and process exits are not caught.
+    """
+    try:
+        yield
+    except Exception as exc:
+        failure = handler(exc) if handler is not None else None
+        if failure is None:
+            failure = (
+                exc
+                if isinstance(exc, (QuestionError, RouterError, RouterUnavailable, RunError))
+                else QuestionError(f"{type(exc).__name__}: {exc}")
+            )
+        if failure is exc:
+            raise
+        raise failure from exc
 
 
 _STOP_REASONS: dict[str, StopReason] = {
@@ -233,6 +266,8 @@ class RouterModel(ModelAPI):
             raise RuntimeError("router calls must run inside an Inspect sample to be metered")
         if self._client is None:
             raise RuntimeError("router model has no bound client")
+        if failure := store().get(QUESTION_FAILURE_KEY):
+            raise QuestionError(failure)
         request = ModelInput.from_inspect(input, tools, tool_choice, config)
         call = RouterCall(submission_id=self.model_name, scope=scope, request=request)
         started = time.monotonic()
@@ -252,6 +287,8 @@ class RouterModel(ModelAPI):
                     timing.record(elapsed, supplied=False)
             if isinstance(exc, RouterError):
                 store().set(ROUTER_FAILURE_KEY, str(exc) or type(exc).__name__)
+            elif isinstance(exc, QuestionError):
+                store().set(QUESTION_FAILURE_KEY, str(exc))
             raise
         elapsed = time.monotonic() - started
         duration = reply.time_s if reply.time_s is not None else elapsed

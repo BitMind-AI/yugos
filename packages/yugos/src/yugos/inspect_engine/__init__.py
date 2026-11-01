@@ -41,13 +41,16 @@ from .receipts import (  # noqa: E402
 )
 from .roles import TaskRole, resolve_task_roles  # noqa: E402
 from .router_model import (  # noqa: E402
+    QuestionError,
     RouterCall,
     RouterClient,
     RouterError,
     RouterReply,
     RouterToolCall,
     RouterUnavailable,
+    RunError,
     model_working_time,
+    question_failure,
     record_model_time,
     router_model,
 )
@@ -69,11 +72,14 @@ __all__ = [
     "RolePin",
     "RolePinMismatch",
     "RouterCall",
+    "QuestionError",
+    "question_failure",
     "RouterClient",
     "RouterError",
     "RouterReply",
     "RouterToolCall",
     "RouterUnavailable",
+    "RunError",
     "SampleMeasurement",
     "SampleScope",
     "UnboundGraderRole",
