@@ -1,17 +1,25 @@
 """World cards, prices and provider mapping behave like the hosted meter, offline."""
 
 import json
+import time
+from decimal import Decimal
 
 import pytest
 from inspect_ai import Task
 from inspect_ai.dataset import Sample
-from inspect_ai.model import ModelUsage
+from inspect_ai.model import ChatMessageAssistant, ModelOutput, ModelUsage
 from inspect_ai.util import SandboxEnvironmentSpec
 from inspect_ai.util._sandbox.compose import ComposeConfig
 from local_fixtures import CARD
 
-from yugos.inference.actions import ModelChoice
-from yugos.inference.calls import ModelRequest
+from yugos.inference.actions import CallAction, ModelChoice
+from yugos.inference.calls import (
+    CallError,
+    CallLimits,
+    MeteredCalls,
+    ModelRequest,
+    QuestionLimitExceeded,
+)
 from yugos.inference.chat import ModelInput
 from yugos.inspect_engine.providers import inspect_generation
 from yugos_evals.local import providers
@@ -120,6 +128,65 @@ def test_quotes_bound_calls_and_keys_are_required():
         client.quote(request(model, max_output_tokens=5000))
     with pytest.raises(ValueError, match="not admitted"):
         client.quote(request(ModelChoice(provider_id="openai", model_id="gpt-judge")))
+
+
+@pytest.mark.parametrize(
+    ("output_tokens", "limited_budget", "error", "message"),
+    [
+        (12000, None, None, None),
+        (12000, "max_cost_usd", CallError, "evaluation budget"),
+        (12000, "max_question_cost_usd", QuestionLimitExceeded, "question budget"),
+        (21000, None, CallError, "exceeded its declared upper bound"),
+    ],
+)
+def test_output_overruns_use_reviewed_reservations(
+    monkeypatch, output_tokens, limited_budget, error, message
+):
+    raw = json.loads(json.dumps(RAW))
+    provider = raw["providers"][0]
+    provider["provider_id"] = "openrouter"
+    provider["token_prices"]["gpt-test"] = {
+        "input_usd_per_million": 0,
+        "output_usd_per_million": 1,
+    }
+    provider["model_limits"]["gpt-test"]["max_output_tokens"] = 20000
+    model = ModelChoice(provider_id="openrouter", model_id="gpt-test")
+    client = LocalProviderClient(WorldCard(raw), [model], env={"OPENROUTER_API_KEY": "k"})
+    sent = []
+
+    async def generate(call):
+        sent.append(call)
+        output = ModelOutput.from_message(ChatMessageAssistant(content="answer"))
+        output.usage = ModelUsage(input_tokens=0, output_tokens=output_tokens)
+        return output, "openai"
+
+    monkeypatch.setattr(client, "_generate", generate)
+    allowances = {"max_cost_usd": 0.032, "max_question_cost_usd": 0.032}
+    if limited_budget:
+        allowances[limited_budget] = 0.015
+    meter = MeteredCalls("local", client, CallLimits(**allowances), lambda _: None)
+    action = CallAction(model=model, input=ModelInput.from_text("question"))
+
+    def execute():
+        return meter.execute(action, "q", deadline=time.monotonic() + 10, max_output_tokens=8192)
+
+    if error:
+        with pytest.raises(error, match=message):
+            execute()
+        assert len(sent) == (0 if limited_budget else 1)
+        if not limited_budget:
+            assert meter.calls[0].response.spend.usd == Decimal("0.021")
+            assert meter.budget.stopped.is_set()
+        return
+
+    assert execute().spend.usd == Decimal("0.012")
+    assert not meter.budget.reservations
+    # Actual settlement releases enough of the first hold to admit another call.
+    assert execute().spend.usd == Decimal("0.012")
+    assert len(sent) == 2
+    assert all(call.max_output_tokens == 8192 for call in sent)
+    assert not meter.budget.reservations
+    assert not meter.budget.stopped.is_set()
 
 
 @pytest.mark.parametrize(

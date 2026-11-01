@@ -96,6 +96,10 @@ different visibilities still fail. Records are sorted by question id.
 API keys before it spends. `--max-cost` is a USD cap on router and grader
 spend together. It defaults to 100. The run stops when the next call would
 exceed it, and still writes what it finished.
+Before dispatch, each call must fit a reservation based on the model's reviewed
+output ceiling, including reasoning. The requested token cap is still sent, but
+is not assumed to bound billing. Settlement charges actual usage and releases
+the unused reservation.
 
 Results in `--log-dir`:
 
