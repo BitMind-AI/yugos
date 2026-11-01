@@ -236,6 +236,19 @@ def test_any_error_after_shared_state_stops_also_stops_the_run():
     assert host.outcome(interrupted) is interrupted and host.stopped == [interrupted]
 
 
+@pytest.mark.parametrize("owner", ["submission", "infrastructure"])
+def test_a_stop_noticed_by_another_question_keeps_the_session_exit_cause(owner):
+    # A provider error can overtake the protocol fault that closed the worker.
+    host = FailureHost()
+    fault = Failure(code="request.protocol", request_id="r", detail="bad envelope")
+    host.session.session_exit = SessionExit(fault, owner)
+    exc = LookupError("provider error in another question")
+    assert host.outcome(exc) is exc
+    [cause] = host.stopped
+    assert isinstance(cause, SessionError) and cause.owner == owner
+    assert cause.failure == fault and cause.outcome.session_exit is host.session.session_exit
+
+
 def test_a_protocol_fault_fails_its_request_and_stops_the_shared_worker():
     host = FailureHost()
     host.session.session_exit = object()
@@ -288,6 +301,44 @@ def test_swallowed_question_failure_cannot_be_scored_or_dispatch_again(tmp_path)
     }
     assert rows["broken"].failure_owner == "infrastructure"
     assert rows["broken"].grade is None and rows["broken"].measurement.outcome.unrealized
+    assert rows["healthy"].grade.score == 1
+
+
+def test_a_caught_submission_failure_cannot_dispatch_again(tmp_path):
+    calls = []
+    host = FailureHost()
+
+    async def client(call):
+        calls.append(call.scope.sample_id)
+        with host.boundary(call):
+            if call.scope.sample_id == "broken":
+                raise RouterError("router bug")
+            return reply("yes")
+
+    @solver
+    def retrying_solver():
+        async def solve(state, generate):
+            for _ in range(2):
+                try:
+                    await generate(state)
+                except RouterError:
+                    state.output = ModelOutput.from_content("fixture", "yes")
+            return state
+
+        return solve
+
+    task = pack_task(
+        [exact_question("broken", "yes"), exact_question("healthy", "yes")], name="pack"
+    )
+    task.solver = retrying_solver()
+    log = run_competition_eval(
+        task, router_model(client, submission_id="sub"), log_dir=str(tmp_path), display="none"
+    )
+    assert calls.count("broken") == 1 and calls.count("healthy") == 2
+    rows = {
+        row.measurement.question_id: row for row in measure_log(read_eval_log(log.location), [])
+    }
+    assert rows["broken"].failure_owner == "submission" and rows["broken"].grade is None
     assert rows["healthy"].grade.score == 1
 
 

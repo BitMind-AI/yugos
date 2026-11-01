@@ -16,7 +16,8 @@ from contextlib import contextmanager
 from inspect_ai.util import LimitExceededError
 
 from yugos.inference.calls import QuestionLimitExceeded
-from yugos.submission.session import RequestState, SessionError
+from yugos.submission.protocol import Failure
+from yugos.submission.session import RequestOutcome, RequestState, SessionError
 
 from .router_model import QuestionError, RouterCall, RouterError, RouterUnavailable, RunError
 
@@ -95,7 +96,7 @@ class QuestionFailures:
             )
             fatal = self.run_stopped() or isinstance(exc, (RunError, *self.fatal_errors))
             if fatal and not submission_failed:
-                self.stop_run(call, exc)
+                self.stop_run(call, self._stop_cause(exc))
                 raise
             outcome = self._outcome(call, exc, role, submission_failed)
             if not isinstance(outcome, RouterUnavailable):
@@ -105,6 +106,23 @@ class QuestionFailures:
             if outcome is exc:
                 raise
             raise outcome from exc
+
+    def _stop_cause(self, exc: Exception) -> Exception:
+        """Stop for the session's recorded exit, whichever callback noticed it first.
+
+        Concurrent questions can observe a closed worker before the request that
+        closed it reports; the exit's own failure and owner explain the stop.
+        """
+        exit = getattr(self.session, "session_exit", None)
+        if exit is None or (isinstance(exc, SessionError) and exc.outcome is not None):
+            return exc
+        failure = exit.failure or Failure(
+            code="preparation.internal", detail="worker session closed"
+        )
+        outcome = RequestOutcome(
+            failure.request_id or "", RequestState.INTERRUPTED, session_exit=exit
+        )
+        return SessionError(failure, outcome=outcome)
 
     def _outcome(self, call, exc, role, submission_failed) -> BaseException:
         if submission_failed:

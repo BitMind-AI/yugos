@@ -243,8 +243,11 @@ class RouterModel(ModelAPI):
             raise RuntimeError("router calls must run inside an Inspect sample to be metered")
         if self._client is None:
             raise RuntimeError("router model has no bound client")
+        # A failed question stays failed, even when its task caught the error.
         if failure := store().get(QUESTION_FAILURE_KEY):
             raise QuestionError(failure)
+        if failure := store().get(ROUTER_FAILURE_KEY):
+            raise RouterError(failure)
         request = ModelInput.from_inspect(input, tools, tool_choice, config)
         call = RouterCall(submission_id=self.model_name, scope=scope, request=request)
         started = time.monotonic()
