@@ -13,17 +13,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from typing import Protocol
 
 from inspect_ai.util import LimitExceededError
 
 from yugos.inference.calls import CallLimits, MeteredCalls, QuestionLimitExceeded
 from yugos.submission.protocol import Failure
-from yugos.submission.session import (
-    RequestOutcome,
-    RequestState,
-    SessionError,
-    SubmissionSession,
-)
+from yugos.submission.session import RequestOutcome, RequestState, SessionError, SessionExit
 
 from .router_model import QuestionError, RouterCall, RouterError, RouterUnavailable, RunError
 
@@ -54,6 +50,14 @@ def question_exhausted(exc: QuestionLimitExceeded, limits: CallLimits) -> LimitE
     )
 
 
+class ExitingSession(Protocol):
+    """What the boundary reads from a host's routing session."""
+
+    @property
+    def session_exit(self) -> SessionExit | None:
+        """Set once a worker closes; sessions with no worker to lose keep it None."""
+
+
 class QuestionFailures(ABC):
     """Base for a host's router: classify each callback failure in one place.
 
@@ -64,8 +68,8 @@ class QuestionFailures(ABC):
 
     meter: MeteredCalls
     service_meter: MeteredCalls | None
-    # None when no worker is loaded (operator-only routers); it never exits.
-    session: SubmissionSession | None
+    # None until a session is loaded, and for routers without one.
+    session: ExitingSession | None
     limits: CallLimits
     fatal_errors: tuple[type[Exception], ...] = ()
 
