@@ -94,7 +94,11 @@ class CallRecord(BaseModel):
 
 
 class QuestionLimitExceeded(RuntimeError):
-    """This question cannot finish within its call, spend, or time limits."""
+    """This question cannot finish within its call, spend, or time limits; `limit` names which."""
+
+    def __init__(self, detail: str, *, limit: Literal["time", "calls", "cost"]):
+        super().__init__(detail)
+        self.limit = limit
 
 
 class RequestRejected(ValueError):
@@ -204,7 +208,7 @@ class MeteredCalls:
             budget._raise_if_stopped()
             remaining = deadline - clock()
             if remaining <= 0:
-                raise QuestionLimitExceeded("question time limit reached")
+                raise QuestionLimitExceeded("question time limit reached", limit="time")
             question_calls = [c for c in budget.calls if c.question_id == question_id]
             available = limits.max_cost_usd - committed_usd(budget.calls) - math.fsum(
                 cost for _, cost in budget.reservations.values()
@@ -307,7 +311,7 @@ class MeteredCalls:
         limits = budget.limits
         remaining = deadline - clock()
         if remaining <= 0:
-            raise QuestionLimitExceeded("question time limit reached")
+            raise QuestionLimitExceeded("question time limit reached", limit="time")
         caps = [
             c
             for c in (
@@ -329,7 +333,7 @@ class MeteredCalls:
             question_calls = [c for c in budget.calls if c.question_id == question_id]
             pending = [cost for qid, cost in budget.reservations.values() if qid == question_id]
             if len(question_calls) + len(pending) >= limits.max_calls_per_question:
-                raise QuestionLimitExceeded("question call limit reached")
+                raise QuestionLimitExceeded("question call limit reached", limit="calls")
             try:
                 quote = self._quote(request)
                 if self.fit_request is not None:
@@ -337,7 +341,7 @@ class MeteredCalls:
                     question_calls = [c for c in budget.calls if c.question_id == question_id]
                     pending = [cost for qid, cost in budget.reservations.values() if qid == question_id]
                     if len(question_calls) + len(pending) >= limits.max_calls_per_question:
-                        raise QuestionLimitExceeded("question call limit reached")
+                        raise QuestionLimitExceeded("question call limit reached", limit="calls")
             except (CallError, QuestionLimitExceeded):
                 raise
             except RequestRejected:
@@ -353,10 +357,12 @@ class MeteredCalls:
                 raise failure
             question_cost = committed_usd(question_calls)
             if quote > limits.max_question_cost_usd - question_cost - math.fsum(pending) + 1e-12:
-                raise QuestionLimitExceeded("question budget cannot fund the next call")
+                raise QuestionLimitExceeded(
+                    "question budget cannot fund the next call", limit="cost"
+                )
             remaining = deadline - clock()
             if remaining <= 0:
-                raise QuestionLimitExceeded("question time limit reached")
+                raise QuestionLimitExceeded("question time limit reached", limit="time")
             request = request.model_copy(
                 update={"timeout_s": min(remaining, self.limits.call_timeout_s)}
             )
@@ -389,7 +395,7 @@ class MeteredCalls:
                 request = prepared
             remaining = deadline - clock()
             if remaining <= 0:
-                raise QuestionLimitExceeded("question time limit reached")
+                raise QuestionLimitExceeded("question time limit reached", limit="time")
             request = request.model_copy(update={"timeout_s": min(request.timeout_s, remaining)})
             self._steps[question_id] = step + 1
             budget.reservations[request.call_id] = (question_id, quote)
@@ -438,5 +444,5 @@ class MeteredCalls:
             if response.error is not None:
                 raise ProviderCallFailed(f"provider request failed: {response.error}", pending=call)
         if clock() > deadline:
-            raise QuestionLimitExceeded("question time limit reached")
+            raise QuestionLimitExceeded("question time limit reached", limit="time")
         return call.response

@@ -270,10 +270,10 @@ class LocalRouter(QuestionFailures):
         first_call = len(self.meter.calls)
         remaining = attempt.deadline - time.monotonic()
         if remaining <= 0:
-            raise QuestionLimitExceeded("question time limit reached")
+            raise QuestionLimitExceeded("question time limit reached", limit="time")
         choice = self.session.route(call.request, request_id, timeout_s=remaining)
         if time.monotonic() > attempt.deadline:
-            raise QuestionLimitExceeded("question time limit reached")
+            raise QuestionLimitExceeded("question time limit reached", limit="time")
         action = CallAction(model=choice, input=call.request)
         response = self._dispatch(self.meter, action, call, attempt.deadline)
         return reply(response, self.meter.calls[first_call:])
