@@ -106,7 +106,9 @@ Results in `--log-dir`:
 
 Errors in an individual question leave that question incomplete while later
 questions and tasks continue. This includes provider, tool, simulator and grader
-errors, and unfamiliar exceptions. Potentially billed failures are not retried;
+errors, and unfamiliar exceptions. A question that reaches its call, spend or
+time limit ends there and is scored on what it did, as in hosted evaluation.
+Potentially billed failures are not retried;
 unknown bills keep their reservations held against the remaining budget. Shared
 worker failures, failed persistence and violated accounting bounds stop the run.
 An incomplete question remains visible in the logs and final summary, even if

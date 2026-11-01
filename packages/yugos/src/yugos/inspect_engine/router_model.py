@@ -14,7 +14,6 @@ import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -51,6 +50,7 @@ require_pinned_inspect()
 API_NAME = "yugos-router"
 # Sample-store key recording a failure the submission owns (see RouterError).
 ROUTER_FAILURE_KEY = "yugos.router_failure"
+# Sample-store key recording an incomplete question (see QuestionError).
 QUESTION_FAILURE_KEY = "yugos.question_failure"
 
 
@@ -111,29 +111,6 @@ class RouterUnavailable(RuntimeError):
     def __init__(self, message: str, *, retry_after: float | None = None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
-
-
-@contextmanager
-def question_failure(handler: Callable[[Exception], Exception | None] | None = None):
-    """Contain unfamiliar question errors; hosts handle known or fatal failures explicitly.
-
-    A handler may return a specific question/limit/retry exception, or raise a
-    fatal error after stopping shared admission. Returning None uses the default
-    incomplete-question outcome. Cancellation and process exits are not caught.
-    """
-    try:
-        yield
-    except Exception as exc:
-        failure = handler(exc) if handler is not None else None
-        if failure is None:
-            failure = (
-                exc
-                if isinstance(exc, (QuestionError, RouterError, RouterUnavailable, RunError))
-                else QuestionError(f"{type(exc).__name__}: {exc}")
-            )
-        if failure is exc:
-            raise
-        raise failure from exc
 
 
 _STOP_REASONS: dict[str, StopReason] = {

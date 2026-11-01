@@ -209,7 +209,7 @@ def measure_log(
             else None
         )
         deadline = sample.limit is not None and sample.limit.type in _DEADLINE_LIMITS
-        grade = None
+        grade, error = None, None
         try:
             score = (
                 None
@@ -224,7 +224,7 @@ def measure_log(
                         score,
                         grader,
                         truncated=finish == "length",
-                        router_failed=owner is not None or deadline,
+                        router_failed=deadline,
                     )
                     value = 0.0
                 else:
@@ -237,7 +237,7 @@ def measure_log(
         except Exception as exc:
             if not isolate_errors:
                 raise
-            sample.store[QUESTION_FAILURE_KEY] = f"{type(exc).__name__}: {exc}"
+            error = f"{type(exc).__name__}: {exc}"
             value, grade, owner = 0.0, None, "infrastructure"
         with localcontext() as context:
             context.prec = PRECISION
@@ -270,11 +270,10 @@ def measure_log(
                 spend_usd=cost,
                 active_ns=round(active * 1_000_000_000),
                 failure_owner=owner,
-                error=sample.error.message
-                if sample.error
-                else (
-                    sample.store.get(QUESTION_FAILURE_KEY) or sample.store.get(ROUTER_FAILURE_KEY)
-                ),
+                error=error
+                or (sample.error.message if sample.error else None)
+                or sample.store.get(QUESTION_FAILURE_KEY)
+                or sample.store.get(ROUTER_FAILURE_KEY),
             )
         )
     return tuple(rows)

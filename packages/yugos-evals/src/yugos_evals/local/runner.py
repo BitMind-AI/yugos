@@ -292,7 +292,9 @@ def run_local(
             if call.response.spend.status != "known"
         ],
     )
-    if failure is None and any(not row["complete"] for row in result["summary"].values()):
+    if failure is None and any(
+        row["failure_owner"] == "infrastructure" for row in result["questions"]
+    ):
         failure = "one or more questions are incomplete; see the logs"
     result.update(
         status="failed" if failure else "complete",

@@ -33,16 +33,15 @@ from yugos.inference.calls import CallLimits, CallRecord, MeteredCalls, Question
 from yugos.inspect_engine import (
     MemoryReceipts,
     ProviderReceipt,
+    QuestionFailures,
     ReceiptSink,
     RouterCall,
-    RouterError,
     RouterReply,
     RouterToolCall,
     RunError,
-    question_failure,
 )
 from yugos.submission.protocol import MAX_FRAME_BYTES
-from yugos.submission.session import CleanupReport, RequestState, SessionError
+from yugos.submission.session import CleanupReport
 
 _SECRET_ENV = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.IGNORECASE)
 
@@ -164,12 +163,11 @@ class _Attempt:
     calls: set[str] = field(default_factory=set)
 
 
-class LocalRouter:
+class LocalRouter(QuestionFailures):
     """The RouterClient for one loaded submission, plus accounted service-role calls.
 
-    Router and service calls share the run's spend cap. A submission failure fails
-    only its sample (`RouterError`). Other question errors leave it incomplete;
-    stopped accounting, persistence failures and a broken shared worker stop the run.
+    Router and service calls share the run's spend cap. Failures are classified at
+    Yugos's shared question boundary, as in hosted evaluation.
     """
 
     def __init__(
@@ -256,35 +254,13 @@ class LocalRouter:
         )
 
     async def __call__(self, call: RouterCall) -> RouterReply:
-        with question_failure(self._question_failure):
+        with self.boundary(call):
             # Finish the blocking worker/provider transaction even if Inspect cancels.
             async with self._lock:
                 return await anyio.to_thread.run_sync(self._generate, call)
 
-    def _question_failure(self, exc, *, service=False):
-        """Keep individual failures local unless shared accounting or the worker stopped."""
-        if (
-            self.failure is not None
-            or self.meter.budget.stopped.is_set()
-            or isinstance(exc, RunError)
-        ):
-            self.fail(exc)
-            raise exc
-        if not service and isinstance(exc, QuestionLimitExceeded):
-            return RouterError(str(exc))
-        if isinstance(exc, SessionError):
-            if self.session.session_exit is not None:
-                self.fail(exc)
-                if (
-                    exc.owner == "submission"
-                    and exc.outcome is not None
-                    and exc.outcome.state == RequestState.FAILED
-                ):
-                    return RouterError(str(exc))
-                raise exc
-            if exc.owner == "submission":
-                return RouterError(str(exc))
-        return None
+    def stop_run(self, call: RouterCall, exc: Exception) -> None:
+        self.fail(exc)
 
     def _generate(self, call: RouterCall) -> RouterReply:
         if call.scope.sample_uuid in self.scoring:
@@ -310,7 +286,7 @@ class LocalRouter:
         `pinned` generation settings (wire names) replace whatever the call requested;
         a pinned reasoning effort is carried by `model` instead.
         """
-        with question_failure(lambda exc: self._question_failure(exc, service=True)):
+        with self.boundary(call, role="service"):
             async with self._lock:
                 return await anyio.to_thread.run_sync(
                     self._service_call, model, pinned_call(call, pinned or {}, model)
