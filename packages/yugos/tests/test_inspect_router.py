@@ -207,6 +207,9 @@ def test_known_question_outcomes_are_classified_once():
     limit = host.outcome(QuestionLimitExceeded("question call limit reached"))
     assert isinstance(limit, LimitExceededError) and limit.type == "turn"
     assert str(limit.message).startswith(QUESTION_EXHAUSTED)
+    # A spend refusal is a cost deadline, not the call cap.
+    spent = host.outcome(QuestionLimitExceeded("question budget cannot fund the next call"))
+    assert spent.type == "cost" and spent.limit == 1
     assert isinstance(host.outcome(submission_fault(RequestState.FAILED)), RouterError)
     # A service role never owns the submission's protocol faults.
     served = host.outcome(submission_fault(RequestState.FAILED), role="grader")

@@ -37,7 +37,8 @@ def question_exhausted(exc: QuestionLimitExceeded, limits) -> LimitExceededError
     reason = str(exc)
     if "time" in reason:
         kind, limit = "time", limits.question_timeout_s
-    elif "call" in reason:
+    # Spend refusals also mention "the next call"; only the call cap is a turn limit.
+    elif "call limit" in reason:
         kind, limit = "turn", limits.max_calls_per_question
     else:
         kind, limit = "cost", limits.max_question_cost_usd
