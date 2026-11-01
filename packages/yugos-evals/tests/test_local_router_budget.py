@@ -61,7 +61,7 @@ def load_model(weights_path):
     )
     try:
         session.load(metadata.submission_sha256, metadata.manifest_sha256)
-        response = router._generate(call, [False])
+        response = router._generate(call)
         assert response.finish_reason == "length"
         assert len(requests) == 1
         assert requests[0].input == request

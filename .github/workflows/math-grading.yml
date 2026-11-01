@@ -24,14 +24,15 @@ jobs:
       - run: python -m pip install uv==0.8.8
       - run: uv sync --frozen --python ${{ matrix.python }}
       - name: Resource failures, legacy parity and native task round trips
-        run: .venv/bin/python -m pytest packages/yugos/tests/test_concurrent_calls.py packages/yugos/tests/test_inspect_frozen.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/test_math_answer.py packages/yugos-evals/tests/test_math_counterexample.py packages/yugos-evals/tests/test_pairwise_judge.py packages/yugos-evals/tests/test_cruxeval.py packages/yugos-evals/tests/test_grading_corrections.py packages/yugos-evals/tests/test_registration.py -q
-      - name: Local sandbox batching preflight
-        run: .venv/bin/python -m pytest packages/yugos-evals/tests/test_local_run.py -k distinct_sample_sandboxes -q
+        run: .venv/bin/python -m pytest packages/yugos/tests/test_concurrent_calls.py packages/yugos/tests/test_inspect_frozen.py packages/yugos/tests/test_inspect_router.py packages/yugos/tests/test_inspect_measure.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/test_math_answer.py packages/yugos-evals/tests/test_math_counterexample.py packages/yugos-evals/tests/test_pairwise_judge.py packages/yugos-evals/tests/test_cruxeval.py packages/yugos-evals/tests/test_grading_corrections.py packages/yugos-evals/tests/test_registration.py -q
+      - name: Local provider accounting and question isolation
+        run: .venv/bin/python -m pytest packages/yugos-evals/tests/test_local_world.py packages/yugos-evals/tests/test_local_router_budget.py packages/yugos-evals/tests/test_local_run.py -q
       - name: Changed Python source checks
         run: |
           .venv/bin/ruff check packages/yugos/src/yugos/inference/calls.py packages/yugos/tests/test_concurrent_calls.py
           .venv/bin/ruff check packages/yugos/src/yugos/inspect_engine/frozen.py packages/yugos/tests/test_inspect_frozen.py
           .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/local/runner.py packages/yugos-evals/tests/test_local_run.py
+          .venv/bin/ruff check packages/yugos/src/yugos/inspect_engine/router_model.py packages/yugos/src/yugos/inspect_engine/measure.py packages/yugos-evals/src/yugos_evals/local/router.py packages/yugos/tests/test_inspect_router.py packages/yugos/tests/test_inspect_measure.py packages/yugos-evals/tests/test_local_router_budget.py
           .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/scorers/math.py packages/yugos-evals/src/yugos_evals/scorers/_math*.py packages/yugos-evals/src/yugos_evals/scorers/_outcome.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/math_worker_fixture.py
           .venv/bin/ruff check packages/yugos-evals/src/yugos_evals/scorers/mbpp.py packages/yugos-evals/src/yugos_evals/scorers/simpleqa.py packages/yugos-evals/src/yugos_evals/_sample_patches.py packages/yugos-evals/tests/test_grading_corrections.py
           .venv/bin/ruff format --check packages/yugos-evals/src/yugos_evals/scorers/math.py packages/yugos-evals/src/yugos_evals/scorers/_math*.py packages/yugos-evals/src/yugos_evals/scorers/_outcome.py packages/yugos-evals/tests/test_math_process.py packages/yugos-evals/tests/math_worker_fixture.py

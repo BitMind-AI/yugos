@@ -288,10 +288,14 @@ def run_local(
         integrity=cleanup.reaped,
         open_reservations=[
             call.response.spend.reservation_usd
-            for call in router.meter.calls
+            for call in router.meter.budget.calls
             if call.response.spend.status != "known"
         ],
     )
+    if failure is None and any(
+        row["failure_owner"] == "infrastructure" for row in result["questions"]
+    ):
+        failure = "one or more questions are incomplete; see the logs"
     result.update(
         status="failed" if failure else "complete",
         failure=failure,
@@ -328,11 +332,14 @@ def _measurements(
         cohort_sha256=cohort,
         integrity_pass=integrity,
         open_reservations=open_reservations,
+        isolate_errors=True,
     )
     rows = []
     for log in logs:
         uuids = {s.uuid for s in log.samples or ()}
-        for row in measure_log(log, [r for r in receipts if r.sample_uuid in uuids]):
+        for row in measure_log(
+            log, [r for r in receipts if r.sample_uuid in uuids], isolate_errors=True
+        ):
             rows.append(
                 {
                     "question_id": row.measurement.question_id,
@@ -343,6 +350,7 @@ def _measurements(
                     "active_s": row.active_ns / 1e9,
                     "grade_rule": row.measurement.grade_rule,
                     "failure_owner": row.failure_owner,
+                    "error": row.error,
                     "sample_uuid": row.sample_uuid,
                 }
             )

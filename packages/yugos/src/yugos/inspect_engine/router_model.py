@@ -50,6 +50,8 @@ require_pinned_inspect()
 API_NAME = "yugos-router"
 # Sample-store key recording a failure the submission owns (see RouterError).
 ROUTER_FAILURE_KEY = "yugos.router_failure"
+# Sample-store key recording an incomplete question (see QuestionError).
+QUESTION_FAILURE_KEY = "yugos.question_failure"
 
 
 class RouterCall(BaseModel):
@@ -89,6 +91,14 @@ RouterClient = Callable[[RouterCall], Awaitable[RouterReply]]
 
 class RouterError(RuntimeError):
     """The submission failed this call. The sample errors and scores zero; never retried."""
+
+
+class QuestionError(RuntimeError):
+    """This question is incomplete; unrelated questions may continue without retrying it."""
+
+
+class RunError(RuntimeError):
+    """Shared execution is unusable; the host must stop new admissions."""
 
 
 class RouterUnavailable(RuntimeError):
@@ -233,6 +243,11 @@ class RouterModel(ModelAPI):
             raise RuntimeError("router calls must run inside an Inspect sample to be metered")
         if self._client is None:
             raise RuntimeError("router model has no bound client")
+        # A failed question stays failed, even when its task caught the error.
+        if failure := store().get(QUESTION_FAILURE_KEY):
+            raise QuestionError(failure)
+        if failure := store().get(ROUTER_FAILURE_KEY):
+            raise RouterError(failure)
         request = ModelInput.from_inspect(input, tools, tool_choice, config)
         call = RouterCall(submission_id=self.model_name, scope=scope, request=request)
         started = time.monotonic()
@@ -252,6 +267,8 @@ class RouterModel(ModelAPI):
                     timing.record(elapsed, supplied=False)
             if isinstance(exc, RouterError):
                 store().set(ROUTER_FAILURE_KEY, str(exc) or type(exc).__name__)
+            elif isinstance(exc, QuestionError):
+                store().set(QUESTION_FAILURE_KEY, str(exc))
             raise
         elapsed = time.monotonic() - started
         duration = reply.time_s if reply.time_s is not None else elapsed

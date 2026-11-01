@@ -1,6 +1,8 @@
 import asyncio
 import json
+import threading
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,20 +10,27 @@ pytest.importorskip("inspect_ai")
 
 from inspect_ai import Task  # noqa: E402
 from inspect_ai.dataset import MemoryDataset, Sample  # noqa: E402
-from inspect_ai.model import GenerateConfig, RetryDecision  # noqa: E402
+from inspect_ai.log import read_eval_log  # noqa: E402
+from inspect_ai.model import GenerateConfig, ModelOutput, RetryDecision  # noqa: E402
 from inspect_ai.scorer import includes  # noqa: E402
-from inspect_ai.solver import generate, use_tools  # noqa: E402
+from inspect_ai.solver import generate, solver, use_tools  # noqa: E402
 from inspect_ai.tool import tool  # noqa: E402
+from inspect_ai.util import LimitExceededError  # noqa: E402
 from inspect_fakes import ScriptedRouter, exact_question, pack_task, reply, run  # noqa: E402
 
+from yugos.inference.calls import QuestionLimitExceeded  # noqa: E402
 from yugos.inspect_engine import (  # noqa: E402
+    QUESTION_EXHAUSTED,
     JsonlReceipts,
     MemoryReceipts,
     ProviderReceipt,
+    QuestionError,
+    QuestionFailures,
     RouterError,
     RouterReply,
     RouterToolCall,
     RouterUnavailable,
+    RunError,
     measure_log,
     router_model,
     run_competition_eval,
@@ -29,6 +38,13 @@ from yugos.inspect_engine import (  # noqa: E402
 )
 from yugos.inspect_engine.receipts import receipts_by_sample  # noqa: E402
 from yugos.inspect_engine.router_model import RouterModel  # noqa: E402
+from yugos.submission.protocol import Failure  # noqa: E402
+from yugos.submission.session import (  # noqa: E402
+    RequestOutcome,
+    RequestState,
+    SessionError,
+    SessionExit,
+)
 
 
 def receipt(receipt_id="r1", sample_uuid="s1", cost="0.25", **changes):
@@ -134,6 +150,199 @@ def test_only_infrastructure_unavailability_is_retried():
     assert isinstance(decision, RetryDecision) and decision.retry
     assert api.should_retry(RouterError("router crashed")) is False
     assert api.should_retry(TimeoutError()) is False
+
+
+class FailureHost(QuestionFailures):
+    """The smallest host of the shared question boundary."""
+
+    fatal_errors = (ConnectionAbortedError,)
+
+    def __init__(self):
+        self.meter = SimpleNamespace(budget=SimpleNamespace(stopped=threading.Event()))
+        self.service_meter = None
+        self.session = SimpleNamespace(session_exit=None)
+        self.limits = SimpleNamespace(
+            question_timeout_s=60, max_calls_per_question=4, max_question_cost_usd=1
+        )
+        self.stopped, self.ended = [], []
+
+    def stop_run(self, call, exc):
+        self.stopped.append(exc)
+        self.meter.budget.stopped.set()
+
+    def known_failure(self, call, exc, role):
+        if isinstance(exc, TimeoutError):
+            return RouterUnavailable("not billed; retrying")
+        return None
+
+    def question_ended(self, call, outcome):
+        self.ended.append(outcome)
+
+    def outcome(self, exc, **kwargs):
+        try:
+            with self.boundary("call", **kwargs):
+                raise exc
+        except BaseException as raised:
+            return raised
+
+
+def submission_fault(state, *, closed=False):
+    failure = Failure(code="request.failed", request_id="r", detail="router bug")
+    exit = SessionExit(failure, "submission") if closed else None
+    return SessionError(failure, outcome=RequestOutcome("r", state, session_exit=exit))
+
+
+def test_unfamiliar_question_errors_leave_only_their_question_incomplete():
+    host = FailureHost()
+    outcome = host.outcome(LookupError("new provider error"))
+    assert isinstance(outcome, QuestionError) and "LookupError: new provider error" in str(outcome)
+    assert isinstance(outcome.__cause__, LookupError)
+    assert host.ended == [outcome] and not host.stopped
+
+
+def test_known_question_outcomes_are_classified_once():
+    host = FailureHost()
+    assert isinstance(host.outcome(TimeoutError()), RouterUnavailable)
+    assert host.ended == []  # a retry does not end the question
+    limit = host.outcome(QuestionLimitExceeded("question call limit reached"))
+    assert isinstance(limit, LimitExceededError) and limit.type == "turn"
+    assert str(limit.message).startswith(QUESTION_EXHAUSTED)
+    # A spend refusal is a cost deadline, not the call cap.
+    spent = host.outcome(QuestionLimitExceeded("question budget cannot fund the next call"))
+    assert spent.type == "cost" and spent.limit == 1
+    assert isinstance(host.outcome(submission_fault(RequestState.FAILED)), RouterError)
+    # A service role never owns the submission's protocol faults.
+    served = host.outcome(submission_fault(RequestState.FAILED), role="grader")
+    assert isinstance(served, QuestionError)
+    assert not host.stopped
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [RunError("shared protocol is inconsistent"), ConnectionAbortedError("worker lost")],
+)
+def test_explicit_fatal_errors_stop_the_run(exc):
+    host = FailureHost()
+    assert host.outcome(exc) is exc
+    assert host.stopped == [exc] and not host.ended
+
+
+def test_any_error_after_shared_state_stops_also_stops_the_run():
+    host = FailureHost()
+    host.meter.budget.stopped.set()
+    exc = LookupError("after the budget stopped")
+    assert host.outcome(exc) is exc and host.stopped == [exc]
+
+    host = FailureHost()
+    host.session.session_exit = object()
+    interrupted = submission_fault(RequestState.INTERRUPTED, closed=True)
+    assert host.outcome(interrupted) is interrupted and host.stopped == [interrupted]
+
+
+@pytest.mark.parametrize("owner", ["submission", "infrastructure"])
+def test_a_stop_noticed_by_another_question_keeps_the_session_exit_cause(owner):
+    # A provider error can overtake the protocol fault that closed the worker.
+    host = FailureHost()
+    fault = Failure(code="request.protocol", request_id="r", detail="bad envelope")
+    host.session.session_exit = SessionExit(fault, owner)
+    exc = LookupError("provider error in another question")
+    assert host.outcome(exc) is exc
+    [cause] = host.stopped
+    assert isinstance(cause, SessionError) and cause.owner == owner
+    assert cause.failure == fault and cause.outcome.session_exit is host.session.session_exit
+
+
+def test_a_protocol_fault_fails_its_request_and_stops_the_shared_worker():
+    host = FailureHost()
+    host.session.session_exit = object()
+    fault = submission_fault(RequestState.FAILED, closed=True)
+    outcome = host.outcome(fault)
+    assert isinstance(outcome, RouterError)
+    assert host.ended == [outcome] and host.stopped == [fault]
+
+
+def test_cancellation_passes_through_the_boundary():
+    host = FailureHost()
+    assert isinstance(host.outcome(KeyboardInterrupt()), KeyboardInterrupt)
+    assert not host.stopped and not host.ended
+
+
+def test_swallowed_question_failure_cannot_be_scored_or_dispatch_again(tmp_path):
+    calls = []
+    host = FailureHost()
+
+    async def client(call):
+        calls.append(call.scope.sample_id)
+        with host.boundary(call):
+            if call.scope.sample_id == "broken":
+                raise LookupError("unfamiliar callback failure")
+            return reply("yes")
+
+    @solver
+    def swallowing_solver():
+        async def solve(state, generate):
+            for _ in range(2 if state.sample_id == "broken" else 1):
+                try:
+                    await generate(state)
+                except Exception:
+                    state.output = ModelOutput.from_content("fixture", "yes")
+            return state
+
+        return solve
+
+    task = pack_task(
+        [exact_question("broken", "yes"), exact_question("healthy", "yes")], name="pack"
+    )
+    task.solver = swallowing_solver()
+    log = run_competition_eval(
+        task, router_model(client, submission_id="sub"), log_dir=str(tmp_path), display="none"
+    )
+    assert calls.count("broken") == calls.count("healthy") == 1
+    # Reloading the log must retain the failure even though the solver swallowed it.
+    rows = {
+        row.measurement.question_id: row for row in measure_log(read_eval_log(log.location), [])
+    }
+    assert rows["broken"].failure_owner == "infrastructure"
+    assert rows["broken"].grade is None and rows["broken"].measurement.outcome.unrealized
+    assert rows["healthy"].grade.score == 1
+
+
+def test_a_caught_submission_failure_cannot_dispatch_again(tmp_path):
+    calls = []
+    host = FailureHost()
+
+    async def client(call):
+        calls.append(call.scope.sample_id)
+        with host.boundary(call):
+            if call.scope.sample_id == "broken":
+                raise RouterError("router bug")
+            return reply("yes")
+
+    @solver
+    def retrying_solver():
+        async def solve(state, generate):
+            for _ in range(2):
+                try:
+                    await generate(state)
+                except RouterError:
+                    state.output = ModelOutput.from_content("fixture", "yes")
+            return state
+
+        return solve
+
+    task = pack_task(
+        [exact_question("broken", "yes"), exact_question("healthy", "yes")], name="pack"
+    )
+    task.solver = retrying_solver()
+    log = run_competition_eval(
+        task, router_model(client, submission_id="sub"), log_dir=str(tmp_path), display="none"
+    )
+    assert calls.count("broken") == 1 and calls.count("healthy") == 2
+    rows = {
+        row.measurement.question_id: row for row in measure_log(read_eval_log(log.location), [])
+    }
+    assert rows["broken"].failure_owner == "submission" and rows["broken"].grade is None
+    assert rows["healthy"].grade.score == 1
 
 
 def test_submissions_do_not_share_a_connection_pool():

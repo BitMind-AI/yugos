@@ -201,8 +201,9 @@ def test_spend_comes_from_receipts_and_must_be_attributable(tmp_path):
     assert row.spend_usd == Decimal("0.125") and row.measurement.outcome.cost_usd == 0.125
 
     orphan = router.receipts.receipts()[0].model_copy(update={"sample_uuid": "elsewhere"})
-    with pytest.raises(ValueError, match="attributed"):
-        measure_log(log, [orphan])
+    for isolate in (False, True):
+        with pytest.raises(ValueError, match="attributed"):
+            measure_log(log, [orphan], isolate_errors=isolate)
 
 
 def test_a_missing_score_is_rejected_rather_than_measured_as_zero(tmp_path):
@@ -316,8 +317,13 @@ def test_malformed_scores_fail_closed(tmp_path, score, key, match):
     router = ScriptedRouter({question.prompt: "Paris"})
     log = run(pack_task([question], name="pack"), router, tmp_path)
     metadata = {"yugos_score_key": key} if key else {}
+    invalid = rescored(log, score, **metadata)
     with pytest.raises(ValueError, match=match):
-        measure_log(rescored(log, score, **metadata), router.receipts.receipts())
+        measure_log(invalid, router.receipts.receipts())
+    [row] = measure_log(invalid, router.receipts.receipts(), isolate_errors=True)
+    assert row.failure_owner == "infrastructure" and row.grade is None
+    assert row.measurement.outcome.unrealized
+    assert row.spend_usd == router.receipts.receipts()[0].cost_usd
 
 
 def test_infrastructure_errors_leave_the_category_incomplete(tmp_path):

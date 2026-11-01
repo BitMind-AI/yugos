@@ -33,15 +33,15 @@ from yugos.inference.calls import CallLimits, CallRecord, MeteredCalls, Question
 from yugos.inspect_engine import (
     MemoryReceipts,
     ProviderReceipt,
+    QuestionFailures,
     ReceiptSink,
     RouterCall,
-    RouterError,
     RouterReply,
     RouterToolCall,
-    RouterUnavailable,
+    RunError,
 )
 from yugos.submission.protocol import MAX_FRAME_BYTES
-from yugos.submission.session import CleanupReport, SessionError
+from yugos.submission.session import CleanupReport
 
 _SECRET_ENV = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.IGNORECASE)
 
@@ -163,12 +163,11 @@ class _Attempt:
     calls: set[str] = field(default_factory=set)
 
 
-class LocalRouter:
+class LocalRouter(QuestionFailures):
     """The RouterClient for one loaded submission, plus accounted service-role calls.
 
-    Router and service calls share the run's spend cap. A submission failure fails
-    only its sample (`RouterError`); a spend cap, provider failure or broken worker
-    stops the run, as in hosted evaluation.
+    Router and service calls share the run's spend cap. Failures are classified at
+    Yugos's shared question boundary, as in hosted evaluation.
     """
 
     def __init__(
@@ -227,6 +226,7 @@ class LocalRouter:
         return record
 
     def fail(self, exc: Exception) -> None:
+        self.meter.budget.stop()
         if self.failure is None:
             self.failure = exc
 
@@ -238,7 +238,7 @@ class LocalRouter:
             _Attempt(call.scope.sample_uuid, time.monotonic() + self.limits.question_timeout_s),
         )
         if call.call_id in attempt.calls:
-            raise ValueError("Inspect repeated a model invocation")
+            raise RunError("Inspect repeated a model invocation")
         attempt.calls.add(call.call_id)
         return attempt
 
@@ -254,27 +254,17 @@ class LocalRouter:
         )
 
     async def __call__(self, call: RouterCall) -> RouterReply:
-        dispatched = [False]
-        try:
+        with self.boundary(call):
             # Finish the blocking worker/provider transaction even if Inspect cancels.
             async with self._lock:
-                return await anyio.to_thread.run_sync(self._generate, call, dispatched)
-        except (QuestionLimitExceeded, SessionError) as exc:
-            if isinstance(exc, QuestionLimitExceeded) or (
-                exc.failure.owner == "submission" and exc.failure.code.startswith("request.")
-            ):
-                raise RouterError(str(exc)) from None
-            self.fail(exc)
-            if not dispatched[0]:
-                raise RouterUnavailable(str(exc)) from None
-            raise RuntimeError(str(exc)) from None
-        except Exception as exc:  # noqa: BLE001 - latch the run closed on any other failure
-            self.fail(exc)
-            raise RuntimeError(str(exc)) from None
+                return await anyio.to_thread.run_sync(self._generate, call)
 
-    def _generate(self, call: RouterCall, dispatched: list[bool]) -> RouterReply:
+    def stop_run(self, call: RouterCall, exc: Exception) -> None:
+        self.fail(exc)
+
+    def _generate(self, call: RouterCall) -> RouterReply:
         if call.scope.sample_uuid in self.scoring:
-            raise ValueError("the router cannot be called while its sample is scored")
+            raise RunError("the router cannot be called while its sample is scored")
         attempt = self._attempt(call)
         request_id = uuid.uuid4().hex
         first_call = len(self.meter.calls)
@@ -285,7 +275,6 @@ class LocalRouter:
         if time.monotonic() > attempt.deadline:
             raise QuestionLimitExceeded("question time limit reached")
         action = CallAction(model=choice, input=call.request)
-        dispatched[0] = True
         response = self._dispatch(self.meter, action, call, attempt.deadline)
         return reply(response, self.meter.calls[first_call:])
 
@@ -297,14 +286,11 @@ class LocalRouter:
         `pinned` generation settings (wire names) replace whatever the call requested;
         a pinned reasoning effort is carried by `model` instead.
         """
-        try:
+        with self.boundary(call, role="service"):
             async with self._lock:
                 return await anyio.to_thread.run_sync(
                     self._service_call, model, pinned_call(call, pinned or {}, model)
                 )
-        except Exception as exc:  # noqa: BLE001 - stop spending after an unaccounted service
-            self.fail(exc)
-            raise RuntimeError(f"accounted service role failed: {exc}") from None
 
     def _service_call(self, model: ModelChoice, call: RouterCall) -> RouterReply:
         if self.service_meter is None:

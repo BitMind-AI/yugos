@@ -5,19 +5,29 @@ from decimal import Decimal
 
 import pytest
 from evals_fakes import freeze_fixture as freeze_task
+from inspect_ai import Task
 from inspect_ai._util.error import PrerequisiteError
+from inspect_ai.dataset import Sample
 from inspect_ai.log import read_eval_log
+from inspect_ai.model import ModelOutput, get_model
+from inspect_ai.scorer import Score, scorer
+from inspect_ai.solver import solver
+from inspect_ai.tool import tool
 from local_fixtures import (
     CALL_COST,
     CARD,
+    ROUTER,
     ScriptedProvider,
+    exact_questions,
     graded_questions,
     make_bundle,
     make_pack,
 )
 
 from yugos.inspect_engine import JsonlReceipts
+from yugos.spend import OpenReservation
 from yugos_evals.local import providers
+from yugos_evals.local.router import LocalRouter, SubprocessWorker
 from yugos_evals.local.runner import LocalRunError, RunOptions, parse_model_choice, run_local
 from yugos_evals.local.world import WorldCard, load_world_card
 
@@ -106,6 +116,157 @@ def test_cost_cap_stops_the_run_cleanly(tmp_path, provider):
     assert saved["spent_usd"]["router"] <= 0.012
     assert not all(row["complete"] for row in saved["summary"].values())
     assert len(JsonlReceipts(result.path / "receipts.jsonl").receipts()) == 1
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "unknown_spend",
+        "native_tool",
+        "callback",
+        "swallowed",
+        "solver",
+        "tool",
+        "grader",
+        "score",
+        "service",
+    ],
+)
+def test_question_failures_preserve_later_samples_and_tasks(tmp_path, provider, monkeypatch, phase):
+    provider.answers.update(bad="4", healthy="4", later="4")
+    original_complete = providers.LocalProviderClient.complete
+
+    def complete(client, request):
+        response = original_complete(client, request)
+        bad = "bad" in request.input.messages[-1].text
+        if bad and phase in {"unknown_spend", "swallowed"}:
+            return response.model_copy(update={"spend": OpenReservation(reservation_usd="0.01")})
+        if bad and (
+            phase == "native_tool" or (phase == "service" and request.model.model_id == "gpt-judge")
+        ):
+            return response.model_copy(
+                update={"error": "provider returned invalid native tool arguments"}
+            )
+        return response
+
+    monkeypatch.setattr(providers.LocalProviderClient, "complete", complete)
+    original_generate = LocalRouter._generate
+
+    def callback(router, call):
+        if phase == "callback" and call.request.messages[-1].text == "bad":
+            raise LookupError("unfamiliar routing error")
+        return original_generate(router, call)
+
+    monkeypatch.setattr(LocalRouter, "_generate", callback)
+
+    @tool
+    def broken_tool():
+        async def execute() -> str:
+            """Exercise a failing tool during this question."""
+            raise LookupError("unfamiliar tool error")
+
+        return execute
+
+    @solver
+    def fault_solver():
+        async def solve(state, generate):
+            bad = str(state.sample_id).endswith(":bad")
+            if bad and phase == "solver":
+                raise LookupError("unfamiliar solver error")
+            if bad and phase == "tool":
+                await broken_tool()()
+            try:
+                await generate(state)
+            except Exception:
+                if phase != "swallowed":
+                    raise
+                state.output = ModelOutput.from_content("fixture", "4")
+            return state
+
+        return solve
+
+    @scorer(metrics=[])
+    def fault_scorer():
+        async def score(state, target):
+            bad = str(state.sample_id).endswith(":bad")
+            if bad and phase == "grader":
+                raise LookupError("unfamiliar grading error")
+            if phase == "service":
+                await get_model(role="grader").generate(f"GRADE {state.input_text}")
+            return Score(value=2 if bad and phase == "score" else 1)
+
+        return score
+
+    questions = freeze_task(
+        Task(
+            dataset=[Sample(id=id, input=id, target="4") for id in ("bad", "healthy")],
+            solver=fault_solver(),
+            scorer=fault_scorer(),
+        ),
+        source="first",
+        workload_class="chat_qa",
+        required_roles=("grader",) if phase == "service" else (),
+    )
+    questions += exact_questions("next", "chat_qa", {"later": ("later", "4")})
+    roles = {"grader": parse_model_choice("openai/gpt-judge")} if phase == "service" else {}
+    result = run(tmp_path, questions=questions, service_models=roles)
+    saved = result.summary
+    rows = {row["question_id"]: row for row in saved["questions"]}
+    assert set(rows) == {"first:bad", "first:healthy", "next:later"}
+    assert rows["first:bad"]["failure_owner"] == "infrastructure"
+    assert rows["first:bad"]["error"]
+    assert rows["first:bad"]["grade"] == "0"
+    assert Decimal(rows["first:healthy"]["grade"]) == Decimal(rows["next:later"]["grade"]) == 1
+    assert result.failure and "incomplete" in result.failure
+    assert saved["status"] == "failed" and not saved["summary"]["chat_qa"]["complete"]
+    calls = [json.loads(line) for line in (result.path / "calls.jsonl").read_text().splitlines()]
+    bad_calls = [call for call in calls if call["question_id"] == "first:bad"]
+    assert len(bad_calls) <= (2 if phase == "service" else 1)
+    if phase in {"unknown_spend", "swallowed"}:
+        assert bad_calls[0]["response"]["spend"]["status"] == "unresolved"
+    if phase == "native_tool":
+        assert Decimal(bad_calls[0]["response"]["spend"]["usd"]) == Decimal(str(CALL_COST))
+
+
+@pytest.mark.parametrize("failure", ["worker", "protocol", "persistence", "cost_bound"])
+def test_shared_failures_still_stop_later_local_dispatches(
+    tmp_path, provider, monkeypatch, failure
+):
+    if failure == "worker":
+        source = ROUTER.replace('raise RuntimeError("router bug")', '__import__("os")._exit(7)')
+        make_bundle(tmp_path / "router", source=source)
+    elif failure == "protocol":
+        exchange = SubprocessWorker.exchange
+
+        def corrupt(worker, message, *, timeout_s):
+            reply = exchange(worker, message, timeout_s=timeout_s)
+            if json.loads(message)["kind"] == "route":
+                data = json.loads(reply)
+                data["sequence"] += 2
+                return json.dumps(data)
+            return reply
+
+        monkeypatch.setattr(SubprocessWorker, "exchange", corrupt)
+    elif failure == "persistence":
+
+        def unavailable(*args):
+            raise OSError("receipt storage unavailable")
+
+        monkeypatch.setattr(JsonlReceipts, "append", unavailable)
+    else:
+        original = providers.LocalProviderClient.complete
+        from yugos.spend import KnownSpend
+
+        def overrun(client, request):
+            return original(client, request).model_copy(update={"spend": KnownSpend(usd=2)})
+
+        monkeypatch.setattr(providers.LocalProviderClient, "complete", overrun)
+    result = run(tmp_path)
+    assert result.failure and result.summary["status"] == "failed"
+    assert len(provider.models) == (0 if failure == "protocol" else 1)
+    if failure == "protocol":
+        first = result.summary["questions"][0]
+        assert first["failure_owner"] == "submission" and Decimal(first["grade"]) == 0
 
 
 def test_grader_roles_must_be_bound_before_anything_runs(tmp_path, provider):

@@ -11,6 +11,7 @@ from .versions import require_pinned_inspect
 require_pinned_inspect()
 
 from .digest import canonical_receipt, receipt_digest  # noqa: E402
+from .failures import QUESTION_EXHAUSTED, QuestionFailures, question_exhausted  # noqa: E402
 from .fairness import FairnessProfile, competition_eval_options  # noqa: E402
 from .frozen import TaskConfig, evaluation_identity, freeze_task, restore_tasks  # noqa: E402
 from .isolation import (  # noqa: E402
@@ -41,12 +42,14 @@ from .receipts import (  # noqa: E402
 )
 from .roles import TaskRole, resolve_task_roles  # noqa: E402
 from .router_model import (  # noqa: E402
+    QuestionError,
     RouterCall,
     RouterClient,
     RouterError,
     RouterReply,
     RouterToolCall,
     RouterUnavailable,
+    RunError,
     model_working_time,
     record_model_time,
     router_model,
@@ -68,12 +71,16 @@ __all__ = [
     "ReceiptSink",
     "RolePin",
     "RolePinMismatch",
+    "QUESTION_EXHAUSTED",
+    "QuestionError",
+    "QuestionFailures",
     "RouterCall",
     "RouterClient",
     "RouterError",
     "RouterReply",
     "RouterToolCall",
     "RouterUnavailable",
+    "RunError",
     "SampleMeasurement",
     "SampleScope",
     "UnboundGraderRole",
@@ -91,6 +98,7 @@ __all__ = [
     "require_role_pins",
     "role_pins_metadata",
     "model_working_time",
+    "question_exhausted",
     "record_model_time",
     "router_model",
     "run_competition_eval",
