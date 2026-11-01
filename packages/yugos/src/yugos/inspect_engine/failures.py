@@ -11,13 +11,15 @@ never retried, never graded, and left for automatic or operator resolution.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from typing import Protocol
 
 from inspect_ai.util import LimitExceededError
 
-from yugos.inference.calls import QuestionLimitExceeded
+from yugos.inference.calls import CallLimits, MeteredCalls, QuestionLimitExceeded
 from yugos.submission.protocol import Failure
-from yugos.submission.session import RequestOutcome, RequestState, SessionError
+from yugos.submission.session import RequestOutcome, RequestState, SessionError, SessionExit
 
 from .router_model import QuestionError, RouterCall, RouterError, RouterUnavailable, RunError
 
@@ -28,39 +30,50 @@ QUESTION_EXHAUSTED = "question budget exhausted before dispatch"
 _DECIDED = (QuestionError, RouterError, RouterUnavailable, LimitExceededError)
 
 
-def question_exhausted(exc: QuestionLimitExceeded, limits) -> LimitExceededError:
+def question_exhausted(exc: QuestionLimitExceeded, limits: CallLimits) -> LimitExceededError:
     """End the sample at its call, spend or time limit, so it is scored on what it did.
 
     Each limit stops the next turn before dispatch. An agent that cannot finish
     within its question's budget fails the task; it is not an unmeasured question.
     """
-    reason = str(exc)
-    if "time" in reason:
-        kind, limit = "time", limits.question_timeout_s
-    # Spend refusals also mention "the next call"; only the call cap is a turn limit.
-    elif "call limit" in reason:
-        kind, limit = "turn", limits.max_calls_per_question
-    else:
-        kind, limit = "cost", limits.max_question_cost_usd
+    match exc.limit:
+        case "time":
+            kind, limit = "time", limits.question_timeout_s
+        case "calls":
+            kind, limit = "turn", limits.max_calls_per_question
+        case "cost":
+            kind, limit = "cost", limits.max_question_cost_usd
     return LimitExceededError(
-        kind, value=limit or 0, limit=limit or 0, message=f"{QUESTION_EXHAUSTED}: {reason}"
+        kind, value=limit or 0, limit=limit or 0, message=f"{QUESTION_EXHAUSTED}: {exc}"
     )
 
 
-class QuestionFailures:
-    """Mixin for a host's router: classify each callback failure in one place.
+class ExitingSession(Protocol):
+    """What the boundary reads from a host's routing session."""
 
-    Hosts provide `meter`, `service_meter` (or None), `session` and
-    `limits`, and implement `stop_run`. They may list `fatal_errors`, map their
-    own known errors in `known_failure`, and settle question state in
-    `question_ended`.
+    @property
+    def session_exit(self) -> SessionExit | None:
+        """Set once a worker closes; sessions with no worker to lose keep it None."""
+
+
+class QuestionFailures(ABC):
+    """Base for a host's router: classify each callback failure in one place.
+
+    Hosts set the attributes below and implement `stop_run`. They may list
+    `fatal_errors`, map their own known errors in `known_failure`, and settle
+    question state in `question_ended`.
     """
 
+    meter: MeteredCalls
+    service_meter: MeteredCalls | None
+    # None until a session is loaded, and for routers without one.
+    session: ExitingSession | None
+    limits: CallLimits
     fatal_errors: tuple[type[Exception], ...] = ()
 
+    @abstractmethod
     def stop_run(self, call: RouterCall, exc: Exception) -> None:
         """Stop new admissions; already admitted calls keep their evidence."""
-        raise NotImplementedError
 
     def known_failure(
         self, call: RouterCall, exc: Exception, role: str | None
@@ -73,9 +86,8 @@ class QuestionFailures:
 
     def run_stopped(self) -> bool:
         budgets = (m.budget for m in (self.meter, self.service_meter) if m is not None)
-        # Sessions without a worker to lose (e.g. operator panels) never exit.
-        return any(budget.stopped.is_set() for budget in budgets) or (
-            getattr(self.session, "session_exit", None) is not None
+        return (
+            any(budget.stopped.is_set() for budget in budgets) or self._session_exit() is not None
         )
 
     @contextmanager
@@ -87,26 +99,37 @@ class QuestionFailures:
         try:
             yield
         except Exception as exc:
-            # The request the submission failed is its own, even when the fault
-            # also closed the shared worker.
-            submission_failed = (
-                role is None
-                and isinstance(exc, SessionError)
-                and exc.owner == "submission"
-                and (exc.outcome is None or exc.outcome.state == RequestState.FAILED)
-            )
             fatal = self.run_stopped() or isinstance(exc, (RunError, *self.fatal_errors))
-            if fatal and not submission_failed:
+            if self._submission_failed(exc, role):
+                # The request the submission failed is its own, even when the fault
+                # also closed the shared worker.
+                outcome = RouterError(str(exc))
+                self.question_ended(call, outcome)
+                if fatal:
+                    self.stop_run(call, exc)
+                raise outcome from exc
+            if fatal:
                 self.stop_run(call, self._stop_cause(exc))
                 raise
-            outcome = self._outcome(call, exc, role, submission_failed)
-            if not isinstance(outcome, RouterUnavailable):
+            outcome = self._outcome(call, exc, role)
+            if not isinstance(outcome, RouterUnavailable):  # Inspect retries it
                 self.question_ended(call, outcome)
-            if fatal:
-                self.stop_run(call, exc)
             if outcome is exc:
                 raise
             raise outcome from exc
+
+    def _session_exit(self):
+        return self.session.session_exit if self.session is not None else None
+
+    @staticmethod
+    def _submission_failed(exc: Exception, role: str | None) -> bool:
+        """Whether the submission failed this router request, not a later bystander."""
+        return (
+            role is None
+            and isinstance(exc, SessionError)
+            and exc.owner == "submission"
+            and (exc.outcome is None or exc.outcome.state == RequestState.FAILED)
+        )
 
     def _stop_cause(self, exc: Exception) -> Exception:
         """Stop for the session's recorded exit, whichever callback noticed it first.
@@ -114,7 +137,7 @@ class QuestionFailures:
         Concurrent questions can observe a closed worker before the request that
         closed it reports; the exit's own failure and owner explain the stop.
         """
-        exit = getattr(self.session, "session_exit", None)
+        exit = self._session_exit()
         if exit is None or (isinstance(exc, SessionError) and exc.outcome is not None):
             return exc
         failure = exit.failure or Failure(
@@ -125,9 +148,7 @@ class QuestionFailures:
         )
         return SessionError(failure, outcome=outcome)
 
-    def _outcome(self, call, exc, role, submission_failed) -> BaseException:
-        if submission_failed:
-            return RouterError(str(exc))
+    def _outcome(self, call, exc, role) -> BaseException:
         if isinstance(exc, _DECIDED):
             return exc
         if (known := self.known_failure(call, exc, role)) is not None:

@@ -204,12 +204,13 @@ def test_known_question_outcomes_are_classified_once():
     host = FailureHost()
     assert isinstance(host.outcome(TimeoutError()), RouterUnavailable)
     assert host.ended == []  # a retry does not end the question
-    limit = host.outcome(QuestionLimitExceeded("question call limit reached"))
-    assert isinstance(limit, LimitExceededError) and limit.type == "turn"
+    limit = host.outcome(QuestionLimitExceeded("question call limit reached", limit="calls"))
+    assert isinstance(limit, LimitExceededError) and (limit.type, limit.limit) == ("turn", 4)
     assert str(limit.message).startswith(QUESTION_EXHAUSTED)
-    # A spend refusal is a cost deadline, not the call cap.
-    spent = host.outcome(QuestionLimitExceeded("question budget cannot fund the next call"))
-    assert spent.type == "cost" and spent.limit == 1
+    # The raised limit decides the sample limit, whatever its message says.
+    for kind, expected in (("time", ("time", 60)), ("cost", ("cost", 1))):
+        ended = host.outcome(QuestionLimitExceeded("cannot fund the next call", limit=kind))
+        assert (ended.type, ended.limit) == expected
     assert isinstance(host.outcome(submission_fault(RequestState.FAILED)), RouterError)
     # A service role never owns the submission's protocol faults.
     served = host.outcome(submission_fault(RequestState.FAILED), role="grader")
