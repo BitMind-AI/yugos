@@ -29,13 +29,6 @@ QUESTION_EXHAUSTED = "question budget exhausted before dispatch"
 # Outcomes already decided by a callback or a host.
 _DECIDED = (QuestionError, RouterError, RouterUnavailable, LimitExceededError)
 
-# Each question limit as the Inspect limit it ends the sample at, and its setting.
-_SAMPLE_LIMITS = {
-    "time": ("time", "question_timeout_s"),
-    "calls": ("turn", "max_calls_per_question"),
-    "cost": ("cost", "max_question_cost_usd"),
-}
-
 
 def question_exhausted(exc: QuestionLimitExceeded, limits: CallLimits) -> LimitExceededError:
     """End the sample at its call, spend or time limit, so it is scored on what it did.
@@ -43,10 +36,15 @@ def question_exhausted(exc: QuestionLimitExceeded, limits: CallLimits) -> LimitE
     Each limit stops the next turn before dispatch. An agent that cannot finish
     within its question's budget fails the task; it is not an unmeasured question.
     """
-    kind, setting = _SAMPLE_LIMITS[exc.limit]
-    limit = getattr(limits, setting) or 0
+    match exc.limit:
+        case "time":
+            kind, limit = "time", limits.question_timeout_s
+        case "calls":
+            kind, limit = "turn", limits.max_calls_per_question
+        case "cost":
+            kind, limit = "cost", limits.max_question_cost_usd
     return LimitExceededError(
-        kind, value=limit, limit=limit, message=f"{QUESTION_EXHAUSTED}: {exc}"
+        kind, value=limit or 0, limit=limit or 0, message=f"{QUESTION_EXHAUSTED}: {exc}"
     )
 
 
