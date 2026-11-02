@@ -7,7 +7,8 @@ from decimal import Decimal
 import pytest
 from inspect_ai import Task
 from inspect_ai.dataset import Sample
-from inspect_ai.model import ChatMessageAssistant, ModelOutput, ModelUsage
+from inspect_ai.model import ChatMessageAssistant, ModelOutput, ModelUsage, get_model
+from inspect_ai.tool import ToolInfo
 from inspect_ai.util import SandboxEnvironmentSpec
 from inspect_ai.util._sandbox.compose import ComposeConfig
 from local_fixtures import CARD
@@ -255,6 +256,103 @@ def test_calls_reach_inspect_with_the_shared_settings_unchanged(monkeypatch):
         "memoize": False,
         **spec.model_args,
     }
+
+
+def gm_card():
+    models = ("claude-haiku-5-5", "gpt-oss-20b")
+    template = RAW["providers"][0]
+    return {
+        "providers": [
+            {
+                "provider_id": "gm",
+                "models": [{"model_id": model} for model in models],
+                "api_formats": {models[0]: "anthropic"},
+                "token_prices": {model: template["token_prices"]["gpt-test"] for model in models},
+                "model_limits": {model: template["model_limits"]["gpt-test"] for model in models},
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize("model_id", ["claude-haiku-5-5", "gpt-oss-20b"])
+def test_mixed_gm_models_send_their_own_protocol_and_authentication(monkeypatch, model_id):
+    import httpx2
+
+    sent = []
+
+    def capture(wire):
+        body = json.loads(wire.content)
+        sent.append((str(wire.url), wire.headers, body))
+        if wire.url.path == "/v1/messages":
+            payload = {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "4"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 2, "output_tokens": 1},
+            }
+        else:
+            payload = {
+                "id": "chat_test",
+                "model": body["model"],
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "4"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+            }
+        return httpx2.Response(200, json=payload)
+
+    def with_transport(name, **kwargs):
+        return get_model(
+            name,
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(capture)),
+            **kwargs,
+        )
+
+    monkeypatch.setattr(providers, "get_model", with_transport)
+    card = WorldCard(gm_card())
+    # Both protocols share one provider and credential in the same run.
+    client = LocalProviderClient(card, card.pool(), env={"GM_API_KEY": "gm-test"})
+    model = ModelChoice(provider_id="gm", model_id=model_id)
+    tool = ToolInfo(name="lookup", description="Look up a key", parameters={"type": "object"})
+    call = request(model).model_copy(
+        update={
+            "input": ModelInput(
+                messages=ModelInput.from_text("Look up a key").messages, tools=(tool,)
+            )
+        }
+    )
+    response = client.complete(call)
+    assert response.error is None and response.text == "4"
+    assert response.spend.status == "known"
+    [(url, headers, body)] = sent
+    assert body["model"] == model_id
+    if model_id.startswith("claude-"):
+        assert url == "https://api.saygm.com/v1/messages"
+        assert headers["x-api-key"] == "gm-test" and "authorization" not in headers
+        assert body["max_tokens"] == card.limits["gm", model_id].max_output_tokens
+        assert body["tools"][0]["name"] == "lookup"
+        assert response.provider_state.data["api"] == "anthropic"
+    else:
+        assert url == "https://api.saygm.com/v1/chat/completions"
+        assert headers["authorization"] == "Bearer gm-test" and "x-api-key" not in headers
+        assert body["tools"][0]["function"]["name"] == "lookup"
+        assert response.provider_state.data["api"] == "openai"
+
+
+def test_invalid_model_protocol_is_refused_before_dispatch(monkeypatch):
+    raw = gm_card()
+    raw["providers"][0]["api_formats"]["claude-haiku-5-5"] = "unsupported"
+    monkeypatch.setattr(providers, "get_model", lambda *a, **kw: pytest.fail("dispatched"))
+    card = WorldCard(raw)
+    with pytest.raises(ValueError, match="api_format"):
+        LocalProviderClient(card, card.pool(), env={"GM_API_KEY": "gm-test"})
 
 
 def test_worker_environment_drops_credentials():

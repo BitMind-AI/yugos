@@ -129,7 +129,7 @@ class LocalProviderClient:
         if unsupported:
             raise ValueError(f"models without world-card prices and limits: {unsupported}")
         self.models = frozenset(models)
-        self.access = {m.provider_id: card.provider(m.provider_id) for m in self.models}
+        self.access = {m: card.provider(m.provider_id, model_id=m.model_id) for m in self.models}
         missing = sorted({a.key_env for a in self.access.values() if not self.env.get(a.key_env)})
         if missing:
             raise MissingCredentials(f"set your provider API keys: {', '.join(missing)}")
@@ -137,7 +137,7 @@ class LocalProviderClient:
             limits = self.card.limits[model.provider_id, model.model_id]
             limits.require_current()
             # Refuse unsupported efforts and formats before anything is dispatched.
-            access = self.access[model.provider_id]
+            access = self.access[model]
             _base_url(access)
             spec = generation(
                 access, model, ModelInput.from_text("check"), limits.max_output_tokens
@@ -229,12 +229,12 @@ class LocalProviderClient:
     def _describe(self, exc: Exception, request: ModelRequest) -> str:
         """An error summary that never echoes the API key."""
         text = f"{type(exc).__name__}: {exc}"[:500]
-        key = self.env.get(self.access[request.model.provider_id].key_env)
+        key = self.env.get(self.access[request.model].key_env)
         return text.replace(key, "***") if key else text
 
     async def _generate(self, request: ModelRequest) -> tuple[ModelOutput, str]:
         choice = request.model
-        access = self.access[choice.provider_id]
+        access = self.access[choice]
         limits = self.card.limits[choice.provider_id, choice.model_id]
         max_tokens = request.max_output_tokens
         if max_tokens is None and access.api_format == "anthropic":

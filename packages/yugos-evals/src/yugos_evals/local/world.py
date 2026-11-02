@@ -115,8 +115,8 @@ class WorldCard:
                     choices.add(ModelChoice(provider_id=pid, model_id=key[1], effort=effort))
         return frozenset(choices)
 
-    def provider(self, provider_id: str) -> ProviderAccess:
-        """How to reach a card provider; unknown endpoints or wire formats are refused."""
+    def provider(self, provider_id: str, *, model_id: str | None = None) -> ProviderAccess:
+        """Provider access with the model's pinned protocol, when the card specifies one."""
         fields = self._providers.get(provider_id)
         if fields is None:
             raise ValueError(f"world card has no provider {provider_id!r}")
@@ -124,6 +124,10 @@ class WorldCard:
         api_base = fields.get("api_base") or (default and default.api_base)
         # A card provider with only an endpoint is taken to be OpenAI-compatible.
         api_format = fields.get("api_format") or (default.api_format if default else "openai")
+        formats = fields.get("api_formats", {})
+        if not isinstance(formats, Mapping):
+            raise ValueError(f"provider {provider_id!r} has invalid api_formats")
+        api_format = formats.get(model_id, api_format)
         key_env = fields.get("key_env") or (default and default.key_env)
         if not api_base or not key_env:
             raise ValueError(
