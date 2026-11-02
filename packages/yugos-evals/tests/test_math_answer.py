@@ -394,3 +394,81 @@ def test_every_settled_small_product_agrees_with_exact_integer_arithmetic():
 def test_small_factorial_products_still_accept_their_exact_integer_answers():
     assert symbolic_grade(r"\prod_{i=1}^{3}i!", r"\boxed{12}").score == 1
     assert symbolic_grade(r"\prod_{i=1}^{3}i!", r"\boxed{13}").code == GradeCode.INCORRECT
+
+
+# Retained regressions from the former hosted factorial-product repair.
+REFERENCE = r"2! \cdot 4! \cdots 2^{2023}!"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        r"(2^0)!",
+        r"(2^{2023})!",
+        r"(2^{2024})!",
+        r"2^{2024}!",
+        r"(2^{99999})!",
+        r"(3^{2024})!",
+    ],
+)
+def test_single_power_factorials_are_incorrect_without_expansion(answer, monkeypatch):
+    def forbid_expansion(*args, **kwargs):
+        pytest.fail("symbolic comparison must not expand factorials")
+
+    monkeypatch.setattr("math.factorial", forbid_expansion)
+    monkeypatch.setattr("sympy.factorial", forbid_expansion)
+    outcome = symbolic_grade(REFERENCE, rf"\boxed{{{answer}}}")
+    assert outcome.code == GradeCode.INCORRECT
+    assert outcome.score == 0
+    assert outcome.settled
+
+
+def test_last_box_and_malformed_box():
+    correct = rf"\boxed{{{REFERENCE}}}"
+    wrong = r"\boxed{\prod_{i=0}^{2022}(2^{i})!}"
+    assert symbolic_grade(REFERENCE, correct + wrong).code == GradeCode.INCORRECT
+    assert not symbolic_grade(REFERENCE, correct + r"\boxed{").settled
+    assert symbolic_grade(REFERENCE, "").code == GradeCode.NOT_ATTEMPTED
+    assert not symbolic_grade(REFERENCE, "unboxed prose").settled
+
+
+def test_long_reasoning_keeps_final_answer_and_oversized_boxes_need_review():
+    from yugos_evals.scorers._symbolic_products import MAX_TEXT
+
+    answer = rf"\boxed{{{REFERENCE}}}"
+    assert symbolic_grade(REFERENCE, "x" * (MAX_TEXT + 1) + answer).score == 1
+    assert not symbolic_grade(REFERENCE, r"\boxed{" + "x" * MAX_TEXT + "}").settled
+
+
+@pytest.mark.parametrize("answer", ["0", "1", "-1", "+2024", "9" * 5000])
+def test_integer_answers_below_the_factorial_product_settle_without_expansion(
+    answer, monkeypatch
+):
+    # The observed saved answer was boxed 1; parsing huge numeric references must
+    # neither require a product-shaped answer nor expand factorials to compare it.
+    monkeypatch.setattr("math.factorial", lambda *a: pytest.fail("factorial expansion"))
+    monkeypatch.setattr(
+        "sympy.factorial", lambda *a: pytest.fail("factorial expansion")
+    )
+    outcome = symbolic_grade(REFERENCE, rf"\boxed{{{answer}}}")
+    assert outcome.settled and outcome.code == GradeCode.INCORRECT
+
+
+@pytest.mark.parametrize("answer", ["1+x", "1=1", r"\frac{1}{x}", "1e999999999"])
+def test_numeric_prefix_does_not_discard_unparsed_math(answer):
+    assert not symbolic_grade(REFERENCE, rf"\boxed{{{answer}}}").settled
+
+
+def test_symbolic_completion_gate_is_preserved_by_native_scorer():
+    result = _score(r"\boxed{(2^{2024})!}", target=REFERENCE, stop_reason="max_tokens")
+    assert result.metadata["code"] == GradeCode.TRUNCATED.value
+
+
+def test_saved_symbolic_reference_selection_rejects_incomplete_products():
+    from yugos_evals.scorers.math import supports_symbolic_product
+
+    assert supports_symbolic_product(REFERENCE)
+    assert supports_symbolic_product(r"\prod_{i=1}^{3}i!")
+    assert not supports_symbolic_product("4")
+    assert not supports_symbolic_product(r"\prod_{i=1}^{n}i!")
+    assert not supports_symbolic_product(REFERENCE + "=0")
