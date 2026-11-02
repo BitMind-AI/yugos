@@ -16,10 +16,11 @@ follow without an upgrade.
 
 ## Net value
 
-The next contest, `competition-v0.1.2-v2.2`, uses **m = 30**, **k = 100**, and
-the same overall dollar penalty in every category. Its pack contains 1,875
-reused public questions and 500 private questions. Every submission, including
-the previous champion, must complete the new pack. The contest starts without an
+The next contest, `competition-v0.2.0-v2.2`, uses **m = 30**, **k = 100**, and
+the same overall dollar penalty in every category. Its calibrated pack contains
+2,642 questions: 1,438 public and 1,204 private. Evaluations use up to eight
+concurrent questions, with Anthropic prompt caching enabled for submission calls.
+Every submission, including the previous champion, must complete the new pack. The contest starts without an
 incumbent; earlier results, decisions and champion history remain archived. The
 first eligible champion receives 100% of rewards, followed by 90/10 and then
 85/10/5 as the new champion history grows.
@@ -106,6 +107,13 @@ Every gate must pass in every category.
 - **Hard quality.** The same rule on the hard subset, once that subset has at
   least 100 questions.
 - **Private quality.** The same rule on the private subset.
+
+The v0.2.0 contest has absolute working-time ceilings of 52,000 seconds for
+chat/QA, 117,000 for math/code, and 145,000 for agentic work. They are twice the
+category leader's measured time on the selected v0.2.0 calibration questions,
+rounded up. They sum question working time across concurrent slots; the separate
+elapsed job deadline is 86,000 seconds. These settings do not promise a fixed
+completion time.
 
 The reference is the category's high-water mark, starting from the panel
 reference frozen by its policy. The new v2.2 contest starts quality floors from
