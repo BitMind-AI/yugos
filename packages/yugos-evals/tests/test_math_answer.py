@@ -13,6 +13,7 @@ import pytest
 from evals_fakes import ScriptedRouter, assert_portable_task_config, run, task_state
 from inspect_ai.scorer import Target
 
+from yugos.evaluation.grades import GradeCode
 from yugos.inspect_engine import restore_tasks
 from yugos_evals.prepared import prepare_task as freeze_task
 from yugos_evals.scorers._math_compare import grade_math as symbolic_grade
@@ -388,3 +389,8 @@ def test_every_settled_small_product_agrees_with_exact_integer_arithmetic():
                 actual = prod(factorial(other**j) for j in range(lower, upper + 1))
                 if outcome.settled:
                     assert outcome.score == int(expected == actual)
+
+
+def test_small_factorial_products_still_accept_their_exact_integer_answers():
+    assert symbolic_grade(r"\prod_{i=1}^{3}i!", r"\boxed{12}").score == 1
+    assert symbolic_grade(r"\prod_{i=1}^{3}i!", r"\boxed{13}").code == GradeCode.INCORRECT

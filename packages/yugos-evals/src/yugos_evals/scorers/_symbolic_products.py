@@ -1,4 +1,4 @@
-"""Compare finite factorial products without constructing their integer values.
+"""Compare factorial products without constructing enormous integer values.
 
 The parser accepts a small mathematical grammar, never Python expressions. A
 comparison either supplies an exact proof or leaves the answer unresolved.
@@ -206,6 +206,17 @@ class Product:
     coefficient: Fraction
     factorials: Counter
 
+    def small_value(self, remaining):
+        if max(remaining, default=0) > 64 or sum(remaining.values()) > 256:
+            raise Unsupported("numeric comparison exceeds budget")
+        value = self.coefficient
+        for argument, count in remaining.items():
+            for factor in range(2, argument + 1):
+                value *= factor**count
+                if max(value.numerator.bit_length(), value.denominator.bit_length()) > MAX_BITS:
+                    raise Unsupported("numeric comparison exceeds budget")
+        return value
+
 
 def factors(node, environment, definitions, budget):
     budget[0] -= 1
@@ -358,6 +369,12 @@ def compare_products(reference, text):
             threshold = (answer.coefficient / gold.coefficient).numerator.bit_length()
             if largest - 1 >= threshold:
                 return Outcome(GradeCode.INCORRECT, details=details)
+        matched = gold.small_value(left) == answer.small_value(right)
+        return Outcome(
+            GradeCode.CORRECT if matched else GradeCode.INCORRECT,
+            score=float(matched),
+            details=details,
+        )
     except (Unsupported, ArithmeticError, RecursionError):
         pass
     return Outcome(
