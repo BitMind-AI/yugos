@@ -16,16 +16,16 @@ follow without an upgrade.
 
 ## Net value
 
-The next contest, `competition-v0.2.0-v2.2`, uses **m = 30**, **k = 100**, and
+The next competition pack, `v0.2.0`, uses **m = 30**, **k = 100**, and
 the same overall dollar penalty in every category. Its calibrated pack contains
 2,642 questions: 1,438 public and 1,204 private. Evaluations use up to eight
 concurrent questions, with Anthropic prompt caching enabled for submission calls.
-Every submission, including the previous champion, must complete the new pack. The contest starts without an
-incumbent; earlier results, decisions and champion history remain archived. The
+Every submission, including the previous champion, must complete the new pack.
+The contest starts without an incumbent; earlier results, decisions and champion history remain archived. The
 first eligible champion receives 100% of rewards, followed by 90/10 and then
 85/10/5 as the new champion history grows.
 
-For v2.2, let `B` be the sum of the calibrated category leaders' model spend on
+For this pack, let `B` be the sum of the calibrated category leaders' model spend on
 the pack, `w_c` the category weight, and `n_c` its question count. Preparation
 freezes `V_c = m * B * w_c / n_c`. The resulting overall spend contribution is
 `-100 * (challenger spend - champion spend) / (m * B)`: a dollar has the same
@@ -37,8 +37,8 @@ c ∈ {chat_qa, math_code, agentic}
 g_{A,i}, g_{K,i} ∈ [0, 1]
 s_{A,i}, s_{K,i}              USD spent on question i
 t_{A,i}, t_{K,i}              working time on question i
-V_c = m * B * w_c / n_c                  (v2.2)
-V_c = m * anchor_cost_per_question[c]    (earlier v2/v2.1 policies)
+V_c = m * B * w_c / n_c                  (v0.2.0 pack)
+V_c = m * anchor_cost_per_question[c]    (earlier policies)
 T_c = k * anchor_time_per_question[c]
 u_i = 2 if question i is hard, else 1
 
@@ -55,7 +55,7 @@ A wrong or missing answer has grade 0 and still counts its spend and time. A
 hard question is one the calibration panel did not solve. `NV_c = +1` is one
 extra percentage point of that category, after spend and time. One extra
 correct answer's spend value is the frozen `V_c`; its time value is `T_c`.
-Under v2.2, extra spend equal to `B` costs about 3.33 overall points, and saving
+For this pack, extra spend equal to `B` costs about 3.33 overall points, and saving
 30% of `B` adds one point. Taking the category anchor's time again on every
 question costs one point within that category before its overall weight.
 
@@ -73,7 +73,7 @@ or a mismatch within its resource limits. Such a grading failure is retained for
 regrading from the saved answer; it does not become an incorrect answer or require
 another miner inference.
 
-For v2.2, the reported bound uses 70% one-sided confidence: the 30th percentile
+For this pack, the reported bound uses 70% one-sided confidence: the 30th percentile
 of `NV` over 2,000 paired resamples
 (questions drawn with replacement inside each category, both routers' answers
 kept together). The challenger is promoted when every gate passes and that
@@ -116,7 +116,7 @@ elapsed job deadline is 86,000 seconds. These settings do not promise a fixed
 completion time.
 
 The reference is the category's high-water mark, starting from the panel
-reference frozen by its policy. The new v2.2 contest starts quality floors from
+reference frozen by its policy. The v0.2.0 pack starts quality floors from
 the weaker panel model; the category leader still supplies cost and time anchors.
 After each promotion the mark rises to the new champion's lower
 confidence bound, so a lucky run does not lift the floor. Marks only increase.
