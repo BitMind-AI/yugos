@@ -45,7 +45,8 @@ still apply, and an unfundable call is refused before dispatch.
 
 ## What you may declare
 
-`models.json` is a JSON array. One object per distinct choice:
+`models.json` accepts the existing JSON array format, with one object per distinct
+choice:
 
 ```json
 [
@@ -53,9 +54,13 @@ still apply, and an unfundable call is refused before dispatch.
 ]
 ```
 
+To declare a universal fallback, use an object with that same array under
+`required_models` and an optional `fallback_model` alongside it. The fallback must
+also appear in the array. See the [miner guide](miner.md) for the full example.
+The original array format and existing bundles continue to work without changes.
+
 `effort` may be `null`. A non-null effort is a different choice and must be
-repeated in `models.json` if `route` can return it. Duplicate choices are
-rejected.
+repeated in the declaration if `route` can return it. Duplicate choices are rejected.
 
 The known provider ids are `openai`, `anthropic`, `google`, `openrouter`,
 `venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, `chutes`, `near`, and

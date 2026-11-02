@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from yugos.chain import add_chain_arguments, configured_chain, resolve_subnet
-from yugos.inference.actions import ModelChoice
+from yugos.inference.actions import ModelChoice, RequiredModels
 from yugos.service_client import ServiceClient, resolve_miner_endpoint, service_url
 from yugos.state import canonical_json, save_json, state_lock
 from yugos.submission.bundle import (
@@ -97,10 +97,21 @@ def _payload_files(source: Path, destination: Path) -> dict[str, Path]:
     return paths
 
 
-class _SubmissionConfig(StrictModel):
-    """Packaging declarations read from the submission's own source files."""
+class _ModelsConfig(StrictModel):
+    """Model declarations shared by the legacy array and optional-fallback format."""
 
+    required_models: RequiredModels
     fallback_model: ModelChoice | None = None
+
+
+def _models_config(raw):
+    try:
+        data = json.loads(raw)
+        return _ModelsConfig.model_validate(
+            {"required_models": data} if isinstance(data, list) else data
+        )
+    except ValueError as exc:
+        raise ValueError(f"Invalid models.json: {exc}") from exc
 
 
 def package(
@@ -108,7 +119,7 @@ def package(
     output: Path,
     *,
     name: str,
-    required_models: tuple[ModelChoice, ...],
+    required_models: tuple[ModelChoice, ...] | None = None,
 ):
     """Bundle a model directory with generated hashes, versions and declarations.
 
@@ -126,12 +137,13 @@ def package(
             "model.py",
             "model.safetensors",
             "models.json",
-            "submission.json",
             "manifest.json",
         )
     }:
         raise ValueError("output must not overwrite a payload file")
     paths = _payload_files(source, destination)
+    if "models.json" not in paths and required_models is None:
+        raise ValueError("models.json is required")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent) as scratch:
         archive_path = Path(scratch) / "submission.zip"
@@ -140,7 +152,7 @@ def package(
         ) as archive:
             hashes = {}
             expanded = 0
-            config_raw = bytearray() if "submission.json" in paths else None
+            config_raw = bytearray() if "models.json" in paths else None
             for filename, path in sorted(paths.items()):
                 digest = hashlib.sha256()
                 with (
@@ -148,9 +160,9 @@ def package(
                     archive.open(filename, "w", force_zip64=True) as member,
                 ):
                     while chunk := payload.read(1024 * 1024):
-                        if filename == "submission.json":
+                        if filename == "models.json":
                             if len(config_raw) + len(chunk) > MAX_MANIFEST_BYTES:
-                                raise ValueError("submission.json exceeds the config size limit")
+                                raise ValueError("models.json exceeds the config size limit")
                             config_raw.extend(chunk)
                         expanded += len(chunk)
                         if expanded > MAX_EXPANDED_BYTES:
@@ -159,14 +171,20 @@ def package(
                         member.write(chunk)
                 hashes[filename] = digest.hexdigest()
             config = (
-                _SubmissionConfig.model_validate_json(config_raw)
+                _models_config(config_raw)
                 if config_raw is not None
-                else _SubmissionConfig()
+                else _ModelsConfig(required_models=required_models)
             )
+            if (
+                required_models is not None
+                and config.required_models
+                != _ModelsConfig(required_models=required_models).required_models
+            ):
+                raise ValueError("required_models differs from models.json")
             manifest = BundleManifest(
                 name=name,
                 runtime=ROUTING_RUNTIME,
-                required_models=required_models,
+                required_models=config.required_models,
                 fallback_model=config.fallback_model,
                 files=hashes,
             )
@@ -511,17 +529,10 @@ def main(argv=None) -> None:
             declaration = args.source / "models.json"
             if output.resolve() == declaration.resolve():
                 raise ValueError("output must not overwrite models.json")
-            try:
-                models = json.loads(declaration.read_text())
-            except (OSError, ValueError) as exc:
-                raise ValueError(
-                    f"Cannot read required model declarations from {declaration}: {exc}"
-                ) from exc
             result = package(
                 args.source,
                 output,
                 name=args.name or args.source.resolve().name,
-                required_models=models,
             )
             print(
                 json.dumps(

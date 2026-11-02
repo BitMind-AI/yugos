@@ -104,13 +104,13 @@ my-router/
   model.py
   model.safetensors
   models.json
-  submission.json      # optional submission settings
   router.json          # optional architecture settings
   encoder/             # optional nested assets
 ```
 
-`models.json` is a JSON array of every provider, model, and effort the router
-may call. Different efforts are different choices. Duplicates are rejected.
+`models.json` declares every provider, model, and effort the router may call.
+Different efforts are different choices. Duplicates are rejected. The existing
+array format remains supported:
 
 ```json
 [
@@ -120,11 +120,15 @@ may call. Different efforts are different choices. Duplicates are rejected.
 ```
 
 The service only runs choices it supports. A call outside this list scores that
-question zero. To declare one universal fallback, add `submission.json` to the
-source directory:
+question zero. To declare one universal fallback, use the object format in the
+same `models.json` file:
 
 ```json
 {
+  "required_models": [
+    {"provider_id": "provider-a", "model_id": "model-a", "effort": "low"},
+    {"provider_id": "provider-b", "model_id": "model-b", "effort": null}
+  ],
   "fallback_model": {
     "provider_id": "provider-b",
     "model_id": "model-b",
@@ -133,12 +137,17 @@ source directory:
 }
 ```
 
-Then package normally with `yugos pack ./my-router`. The fallback must also be in
-`models.json`, including its exact effort. The packager validates the config,
-includes it in the archive and copies the declaration into the hashed manifest.
-Unknown config fields and malformed or undeclared choices are rejected. Omitting
-`submission.json` or `fallback_model` keeps the existing behavior. Use a hosted
-runtime that supports this field before submitting a fallback bundle.
+Package normally with `yugos pack ./my-router`. The fallback must also appear in
+`required_models`, including its exact effort. The packager validates both formats
+and copies the declarations into the hashed manifest. Unknown fields and malformed
+or undeclared choices are rejected. The object format may omit `fallback_model`;
+that and the original array format preserve behavior without a fallback. There is
+no separate settings file or fallback command-line flag.
+
+Use an updated packager for the object format and a hosted runtime supporting the
+fallback field. Existing array files and already-packaged bundles remain valid.
+If your router reads `models.json` directly, read `required_models` for the object
+format instead of assuming the root is an array.
 
 The host may use it once per logical generation when the selected primary is
 known unavailable, or its bounded retries end in a confirmed unbilled
