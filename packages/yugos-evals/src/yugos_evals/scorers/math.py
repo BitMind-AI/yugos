@@ -12,8 +12,21 @@ from yugos.evaluation.grades import GradeCode
 
 from ._math_process import MathWorkerFailed, compare
 from ._outcome import Outcome, completion_gate, to_score
+from ._symbolic_products import VERSION, Unsupported, is_product_reference, parse_product
 
 GRADER_VERSION = 1
+SYMBOLIC_GRADER_VERSION = VERSION
+
+
+def supports_symbolic_product(reference: str) -> bool:
+    """Check whether a saved product reference supports structural regrading."""
+    if not is_product_reference(reference):
+        return False
+    try:
+        parse_product(reference)
+    except (Unsupported, ArithmeticError, RecursionError):
+        return False
+    return True
 
 
 def grade_math(gold: str, text: str, **options) -> Outcome:
@@ -21,6 +34,17 @@ def grade_math(gold: str, text: str, **options) -> Outcome:
     try:
         return Outcome(**compare("grade", gold, text, **options))
     except MathWorkerFailed as exc:
+        if is_product_reference(gold):
+            return Outcome(
+                GradeCode.NEEDS_REVIEW,
+                status="unavailable",
+                details={
+                    "grading_repair": VERSION,
+                    "cause": "symbolic_comparison_unresolved",
+                    "component": "math_worker",
+                    "worker_failure": exc.cause,
+                },
+            )
         return Outcome(
             GradeCode.GRADER_ERROR,
             status="error",
