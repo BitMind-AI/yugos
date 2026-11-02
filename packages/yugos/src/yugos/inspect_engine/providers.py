@@ -53,7 +53,10 @@ def request_api_format(
     if api_format == RESPONSES_API_FORMAT:
         return api_format
     native_gpt = provider_id == "openai" or (
-        provider_id == "gm" and model.model_id.startswith("gpt-")
+        provider_id == "gm"
+        and model.model_id.startswith("gpt-")
+        # SayGM's GPT-OSS family serves tools on Chat Completions.
+        and not model.model_id.startswith("gpt-oss-")
     )
     if not native_gpt or api_format != "openai":
         return api_format

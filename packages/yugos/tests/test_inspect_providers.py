@@ -260,6 +260,23 @@ def test_saygm_keeps_plain_gpt_and_other_model_protocols():
     )
 
 
+@pytest.mark.parametrize("model_id", ["gpt-oss-20b", "gpt-oss-120b"])
+def test_saygm_gpt_oss_tool_history_stays_on_chat(model_id):
+    model = choice("gm", model_id)
+    history = ModelInput(
+        messages=(
+            ChatMessageUser(content="Look up a key"),
+            ChatMessageAssistant(
+                content="", tool_calls=(ToolCall(id="c1", function="lookup", arguments={}),)
+            ),
+            ChatMessageTool(content="value", tool_call_id="c1"),
+        )
+    )
+    assert request_api_format("gm", "openai", model, history) == "openai"
+    # An explicitly selected protocol still takes precedence over automatic routing.
+    assert request_api_format("gm", "openai_responses", model, history) == "openai_responses"
+
+
 def serialized(provider, api_format, model, effort, base_url):
     """The body Inspect's adapter serializes for one call, captured before any network I/O."""
     httpx2 = pytest.importorskip("httpx2")
