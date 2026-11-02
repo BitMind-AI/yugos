@@ -1,6 +1,8 @@
 """A fallback is signed, declared and attested without changing historical bundles."""
 
+import hashlib
 import json
+import zipfile
 
 import pytest
 from bundles import MODEL, make_bundle
@@ -19,20 +21,27 @@ def test_old_bundle_metadata_and_manifest_omit_optional_fallback(tmp_path):
 
 def test_fallback_survives_packaging_preparation_and_attestation(tmp_path):
     archive, _, _ = make_bundle(tmp_path / "source")
-    destination = tmp_path / "prepared"
     original = inspect_bundle(archive)
-    prepared = prepare_to_directory(
-        archive, destination, submission_sha256=original.submission_sha256
-    )
+    source = tmp_path / "router"
+    source.mkdir()
+    with zipfile.ZipFile(archive) as contents:
+        for filename in ("model.py", "model.safetensors"):
+            (source / filename).write_bytes(contents.read(filename))
     fallback = ModelChoice(**MODEL)
+    config_raw = json.dumps({"fallback_model": MODEL}).encode()
+    (source / "submission.json").write_bytes(config_raw)
     packed = package(
-        prepared.root,
+        source,
         tmp_path / "fallback.zip",
         name="with-fallback",
         required_models=original.required_models,
-        fallback_model=fallback,
     )
     assert packed.fallback_model == fallback
+    with zipfile.ZipFile(tmp_path / "fallback.zip") as contents:
+        assert contents.read("submission.json") == config_raw
+        manifest = json.loads(contents.read("manifest.json"))
+        assert manifest["fallback_model"] == fallback.model_dump(mode="json")
+        assert manifest["files"]["submission.json"] == hashlib.sha256(config_raw).hexdigest()
     staged = tmp_path / "fallback-prepared"
     prepare_to_directory(
         tmp_path / "fallback.zip", staged, submission_sha256=packed.submission_sha256
@@ -57,3 +66,64 @@ def test_undeclared_fallback_rejected_before_loading_submission(tmp_path):
     )
     with pytest.raises(ValueError, match="must also appear in required_models"):
         inspect_bundle(archive)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{",
+        "[]",
+        "null",
+        "",
+        json.dumps({"fallback_modle": MODEL}),
+        json.dumps({"fallback_model": {"provider_id": "other", "model_id": "undeclared"}}),
+        json.dumps({"fallback_model": {**MODEL, "effort": "undeclared-effort"}}),
+    ],
+)
+def test_invalid_config_cannot_silently_disable_fallback_or_replace_output(tmp_path, raw):
+    (tmp_path / "model.py").write_text("raise RuntimeError('must not import')")
+    (tmp_path / "model.safetensors").write_bytes(b"weights")
+    (tmp_path / "submission.json").write_text(raw)
+    output = tmp_path / "submission.zip"
+    output.write_bytes(b"previous submission")
+    with pytest.raises(ValueError):
+        package(tmp_path, output, name="router", required_models=(ModelChoice(**MODEL),))
+    assert output.read_bytes() == b"previous submission"
+
+
+def test_submission_config_is_bounded_and_cannot_be_overwritten(tmp_path):
+    from yugos.submission.bundle import MAX_MANIFEST_BYTES
+
+    (tmp_path / "model.py").write_text("raise RuntimeError('must not import')")
+    (tmp_path / "model.safetensors").write_bytes(b"weights")
+    config = tmp_path / "submission.json"
+    config.write_bytes(b" " * (MAX_MANIFEST_BYTES + 1))
+    with pytest.raises(ValueError, match="config size limit"):
+        package(
+            tmp_path,
+            tmp_path / "submission.zip",
+            name="router",
+            required_models=(ModelChoice(**MODEL),),
+        )
+    config.write_text("{}")
+    with pytest.raises(ValueError, match="must not overwrite"):
+        package(tmp_path, config, name="router", required_models=(ModelChoice(**MODEL),))
+    assert config.read_text() == "{}"
+
+
+@pytest.mark.parametrize("settings", [None, {}, {"fallback_model": None}])
+def test_optional_config_preserves_no_fallback_behavior(tmp_path, settings):
+    (tmp_path / "model.py").write_text("raise RuntimeError('must not import')")
+    (tmp_path / "model.safetensors").write_bytes(b"weights")
+    if settings is not None:
+        (tmp_path / "submission.json").write_text(json.dumps(settings))
+    metadata = package(
+        tmp_path,
+        tmp_path / "submission.zip",
+        name="router",
+        required_models=(ModelChoice(**MODEL),),
+    )
+    assert "fallback_model" not in metadata.model_dump(mode="json")
+    assert "fallback_model" not in read_bundle_manifest(tmp_path / "submission.zip").model_dump(
+        mode="json"
+    )

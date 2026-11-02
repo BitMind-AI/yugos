@@ -25,7 +25,7 @@ from yugos.submission.bundle import (
     _safe_member,
     inspect_bundle,
 )
-from yugos.submission.protocol import ROUTING_RUNTIME
+from yugos.submission.protocol import ROUTING_RUNTIME, StrictModel
 
 from .display import Activity as _Heartbeat
 from .display import (
@@ -97,13 +97,18 @@ def _payload_files(source: Path, destination: Path) -> dict[str, Path]:
     return paths
 
 
+class _SubmissionConfig(StrictModel):
+    """Packaging declarations read from the submission's own source files."""
+
+    fallback_model: ModelChoice | None = None
+
+
 def package(
     source: Path,
     output: Path,
     *,
     name: str,
     required_models: tuple[ModelChoice, ...],
-    fallback_model: ModelChoice | None = None,
 ):
     """Bundle a model directory with generated hashes, versions and declarations.
 
@@ -116,7 +121,14 @@ def package(
         raise ValueError("source must be a model directory")
     destination = output.resolve()
     if destination in {
-        source / name for name in ("model.py", "model.safetensors", "models.json", "manifest.json")
+        source / name
+        for name in (
+            "model.py",
+            "model.safetensors",
+            "models.json",
+            "submission.json",
+            "manifest.json",
+        )
     }:
         raise ValueError("output must not overwrite a payload file")
     paths = _payload_files(source, destination)
@@ -128,6 +140,7 @@ def package(
         ) as archive:
             hashes = {}
             expanded = 0
+            config_raw = bytearray() if "submission.json" in paths else None
             for filename, path in sorted(paths.items()):
                 digest = hashlib.sha256()
                 with (
@@ -135,17 +148,26 @@ def package(
                     archive.open(filename, "w", force_zip64=True) as member,
                 ):
                     while chunk := payload.read(1024 * 1024):
+                        if filename == "submission.json":
+                            if len(config_raw) + len(chunk) > MAX_MANIFEST_BYTES:
+                                raise ValueError("submission.json exceeds the config size limit")
+                            config_raw.extend(chunk)
                         expanded += len(chunk)
                         if expanded > MAX_EXPANDED_BYTES:
                             raise ValueError("payload exceeds the expanded bundle size limit")
                         digest.update(chunk)
                         member.write(chunk)
                 hashes[filename] = digest.hexdigest()
+            config = (
+                _SubmissionConfig.model_validate_json(config_raw)
+                if config_raw is not None
+                else _SubmissionConfig()
+            )
             manifest = BundleManifest(
                 name=name,
                 runtime=ROUTING_RUNTIME,
                 required_models=required_models,
-                fallback_model=fallback_model,
+                fallback_model=config.fallback_model,
                 files=hashes,
             )
             raw = canonical_json(manifest.model_dump(by_alias=True))
@@ -431,11 +453,6 @@ def main(argv=None) -> None:
         help="ZIP destination (defaults to SOURCE/submission-<UTC timestamp>.zip)",
     )
     pack.add_argument("--name", help="submission name (defaults to the source directory name)")
-    pack.add_argument(
-        "--fallback-model",
-        type=ModelChoice.model_validate_json,
-        help="one fallback ModelChoice JSON object, also declared in models.json",
-    )
     send = commands.add_parser(
         "submit", help="upload, start evaluation, and commit; may incur charges"
     )
@@ -505,7 +522,6 @@ def main(argv=None) -> None:
                 output,
                 name=args.name or args.source.resolve().name,
                 required_models=models,
-                fallback_model=args.fallback_model,
             )
             print(
                 json.dumps(

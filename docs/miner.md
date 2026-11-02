@@ -104,6 +104,7 @@ my-router/
   model.py
   model.safetensors
   models.json
+  submission.json      # optional submission settings
   router.json          # optional architecture settings
   encoder/             # optional nested assets
 ```
@@ -119,15 +120,25 @@ may call. Different efforts are different choices. Duplicates are rejected.
 ```
 
 The service only runs choices it supports. A call outside this list scores that
-question zero. You may declare one universal `fallback_model` when packaging:
+question zero. To declare one universal fallback, add `submission.json` to the
+source directory:
 
-```sh
-yugos pack ./my-router --fallback-model '{"provider_id":"provider-b","model_id":"model-b","effort":null}'
+```json
+{
+  "fallback_model": {
+    "provider_id": "provider-b",
+    "model_id": "model-b",
+    "effort": null
+  }
+}
 ```
 
-The fallback must also be in `models.json`, including its exact effort. It is
-part of the signed manifest. Omitting it keeps the existing behavior. Use a
-hosted runtime that supports this field before submitting a fallback bundle.
+Then package normally with `yugos pack ./my-router`. The fallback must also be in
+`models.json`, including its exact effort. The packager validates the config,
+includes it in the archive and copies the declaration into the hashed manifest.
+Unknown config fields and malformed or undeclared choices are rejected. Omitting
+`submission.json` or `fallback_model` keeps the existing behavior. Use a hosted
+runtime that supports this field before submitting a fallback bundle.
 
 The host may use it once per logical generation when the selected primary is
 known unavailable, or its bounded retries end in a confirmed unbilled
