@@ -119,7 +119,24 @@ may call. Different efforts are different choices. Duplicates are rejected.
 ```
 
 The service only runs choices it supports. A call outside this list scores that
-question zero. There is no fallback model.
+question zero. You may declare one universal `fallback_model` when packaging:
+
+```sh
+yugos pack ./my-router --fallback-model '{"provider_id":"provider-b","model_id":"model-b","effort":null}'
+```
+
+The fallback must also be in `models.json`, including its exact effort. It is
+part of the signed manifest. Omitting it keeps the existing behavior. Use a
+hosted runtime that supports this field before submitting a fallback bundle.
+
+The host may use it once per logical generation when the selected primary is
+known unavailable, or its bounded retries end in a confirmed unbilled
+availability rejection. There is no fallback chain. The original conversation,
+tools and generation settings are preserved. Incompatible provider state or
+input limits prevent fallback; the host does not truncate the request. Ambiguous
+timeouts, partial output, invalid requests and exhausted budgets do not trigger
+it. Actual calls, costs and time count under the existing limits. Grader and
+simulator models never use the submission fallback.
 
 `model.py` defines `load_model(weights_path)`, returning an object with
 `route(input) -> ModelChoice`. It returns one provider/model/effort choice; it

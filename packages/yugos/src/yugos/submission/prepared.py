@@ -67,11 +67,18 @@ def read_prepared_directory(
         if hashlib.sha256(manifest_raw).hexdigest() != metadata.manifest_sha256:
             raise ValueError("prepared manifest differs from attestation")
         manifest = BundleManifest.model_validate_json(manifest_raw)
-        if (metadata.name, metadata.version, metadata.runtime, metadata.required_models) != (
+        if (
+            metadata.name,
+            metadata.version,
+            metadata.runtime,
+            metadata.required_models,
+            metadata.fallback_model,
+        ) != (
             manifest.name,
             manifest.version,
             manifest.runtime,
             manifest.required_models,
+            manifest.fallback_model,
         ):
             raise ValueError("prepared metadata differs from manifest")
         return PreparedBundle(root=root, metadata=metadata)

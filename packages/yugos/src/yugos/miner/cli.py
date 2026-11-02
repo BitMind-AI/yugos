@@ -103,6 +103,7 @@ def package(
     *,
     name: str,
     required_models: tuple[ModelChoice, ...],
+    fallback_model: ModelChoice | None = None,
 ):
     """Bundle a model directory with generated hashes, versions and declarations.
 
@@ -144,6 +145,7 @@ def package(
                 name=name,
                 runtime=ROUTING_RUNTIME,
                 required_models=required_models,
+                fallback_model=fallback_model,
                 files=hashes,
             )
             raw = canonical_json(manifest.model_dump(by_alias=True))
@@ -429,6 +431,11 @@ def main(argv=None) -> None:
         help="ZIP destination (defaults to SOURCE/submission-<UTC timestamp>.zip)",
     )
     pack.add_argument("--name", help="submission name (defaults to the source directory name)")
+    pack.add_argument(
+        "--fallback-model",
+        type=ModelChoice.model_validate_json,
+        help="one fallback ModelChoice JSON object, also declared in models.json",
+    )
     send = commands.add_parser(
         "submit", help="upload, start evaluation, and commit; may incur charges"
     )
@@ -498,6 +505,7 @@ def main(argv=None) -> None:
                 output,
                 name=args.name or args.source.resolve().name,
                 required_models=models,
+                fallback_model=args.fallback_model,
             )
             print(
                 json.dumps(
