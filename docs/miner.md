@@ -249,6 +249,12 @@ sessions expire after 24 hours.
 
 `yugos submit` opens a funding page when payment is required. The page shows the reservation, your balance, and the run. The minimum payment is $0.50; extra funds stay on your hotkey's balance. You can close the browser after payment and resume with the same receipt.
 
+For the v0.2.0 contest, new evaluations reserve $300: $250 for model charges,
+$45 for compute, and $5 for evaluator services, including their respective fees.
+These are allowances; settlement bills actual usage and releases the unused
+reservation. Previously accepted evaluations keep their original funding terms.
+See [Scoring](scoring.md) for the new pack and timing limits.
+
 The receipt's `status_url` returns you to that page. Quotes last one hour.
 Rerun `submit` with the same receipt and `--renew-funding` to review a new
 quote. Funds already received stay available. The private link lasts seven
