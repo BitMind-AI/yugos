@@ -302,6 +302,12 @@ def grade_math(
         return Outcome(GradeCode.NOT_ATTEMPTED)
     if answer_format == "auto" and _ambiguous_numeric_answer(expected, response):
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "ambiguous_answer"})
+    from ._symbolic_products import compare_products
+
+    if len(expected) <= MAX_MATH_TEXT_CHARS:
+        symbolic = compare_products(expected, response)
+        if symbolic is not None:
+            return symbolic
     if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
     if answer_format == "answer_line":
@@ -391,6 +397,15 @@ def reference_exclusion(answer: str) -> str | None:
         return (
             "ambiguous_log_base: math-verify reads bare \\log as base 10, so an equivalent "
             "\\ln answer grades incorrect"
+        )
+    from ._symbolic_products import compare_products
+
+    symbolic = compare_products(answer, rf"\boxed{{{answer}}}")
+    if symbolic is not None:
+        return (
+            None
+            if symbolic.code == GradeCode.CORRECT
+            else "unparseable_reference: unsupported symbolic product"
         )
     probe = grade_math(answer, f"\\boxed{{{answer}}}")
     if probe.code == GradeCode.INVALID_GOLD:

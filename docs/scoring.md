@@ -65,6 +65,13 @@ The library default, used when a policy leaves these fields unset, is a fixed
 result carries the policy that was actually used. A submission that misses a
 category is not scored.
 
+The math scorer compares supported finite factorial products structurally,
+including shifted indices and explicit indexed definitions, without expanding
+enormous factorials. It records an ungraded result when it cannot prove equality
+or a mismatch within its resource limits. Such a grading failure is retained for
+regrading from the saved answer; it does not become an incorrect answer or require
+another miner inference.
+
 For v2.2, the reported bound uses 70% one-sided confidence: the 30th percentile
 of `NV` over 2,000 paired resamples
 (questions drawn with replacement inside each category, both routers' answers
