@@ -472,3 +472,28 @@ def test_saved_symbolic_reference_selection_rejects_incomplete_products():
     assert not supports_symbolic_product("4")
     assert not supports_symbolic_product(r"\prod_{i=1}^{n}i!")
     assert not supports_symbolic_product(REFERENCE + "=0")
+
+
+@pytest.mark.parametrize("answer,score", [("0", 0), (r"\prod_{j=1}^{4}j!", 1)])
+def test_symbolic_answer_line_overrides_earlier_box(answer, score):
+    result = symbolic_grade(
+        r"\prod_{i=1}^{4}i!",
+        r"\boxed{\prod_{i=1}^{4}i!}" + "\nANSWER: " + answer,
+        answer_format="answer_line",
+    )
+    assert result.settled and result.score == score
+
+
+def test_symbolic_answer_line_keeps_explicit_definition_context():
+    result = symbolic_grade(
+        r"\prod_{i=1}^{3}(2^i)!",
+        "m_j=2^j\nANSWER: " + r"\prod_{j=1}^{3}m_j!",
+        answer_format="answer_line",
+    )
+    assert result.settled and result.score == 1
+
+
+@pytest.mark.parametrize("definitions", [r"m_j=2^j, m_{j}=3^j, ", r"m_{j}=3^j, m_j=2^j, "])
+def test_conflicting_braced_indices_cannot_settle(definitions):
+    result = symbolic_grade(r"\prod_{i=1}^{3}(2^i)!", definitions + r"\boxed{\prod_{j=1}^{3}m_j!}")
+    assert not result.settled

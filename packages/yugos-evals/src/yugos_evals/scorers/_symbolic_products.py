@@ -257,8 +257,9 @@ def definitions(text):
     """Read explicit indexed equalities; ambiguous definitions remain unresolved."""
     found = {}
     exceptions = set(re.findall(r"([A-Za-z])_\{?[0-9]+\}?\s*=", text))
-    for match in re.finditer(r"([A-Za-z])_([A-Za-z])\s*=\s*([^,\n$]+)", text):
-        name, variable, raw = match.groups()
+    for match in re.finditer(r"([A-Za-z])_(?:\{([A-Za-z])\}|([A-Za-z]))\s*=\s*([^,\n$]+)", text):
+        name, braced, bare, raw = match.groups()
+        variable = braced or bare
         if name in exceptions or re.search(r"\\(?:quad|qquad|ge|le|in|forall)\b|[<>]", raw):
             found[name] = None
             continue
@@ -309,7 +310,7 @@ def parse_product(expression, context=""):
     return factors(Parser(expression).parse(), environment, definitions(context), [MAX_TERMS * 4])
 
 
-def compare_products(reference, text):
+def compare_products(reference, text, *, context=None):
     """Return None outside this grammar, otherwise an exact or unresolved grade."""
     if not is_product_reference(reference):
         return None
@@ -334,7 +335,7 @@ def compare_products(reference, text):
                 and max(gold.factorials, default=1) - 1 >= 4 * len(digits)
             ):
                 return Outcome(GradeCode.INCORRECT, details=details)
-        answer = parse_product(expression, text[-MAX_TEXT:])
+        answer = parse_product(expression, (text if context is None else context)[-MAX_TEXT:])
         gold_common = gold.factorials & answer.factorials
         left, right = gold.factorials - gold_common, answer.factorials - gold_common
         if gold.coefficient == answer.coefficient == 0:

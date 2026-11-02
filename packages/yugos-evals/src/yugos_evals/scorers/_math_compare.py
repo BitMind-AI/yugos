@@ -304,18 +304,21 @@ def grade_math(
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "ambiguous_answer"})
     from ._symbolic_products import compare_products
 
-    if len(expected) <= MAX_MATH_TEXT_CHARS:
-        symbolic = compare_products(expected, response)
-        if symbolic is not None:
-            return symbolic
-    if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
-        return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
+    context = response
     if answer_format == "answer_line":
+        if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
+            return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
         units, answer_order = _question_contract(question)
         prepared = _line_answers(expected, response, units, answer_order)
         if isinstance(prepared, Outcome):
             return prepared
         expected, response = prepared
+    if len(expected) <= MAX_MATH_TEXT_CHARS:
+        symbolic = compare_products(expected, response, context=context)
+        if symbolic is not None:
+            return symbolic
+    if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
+        return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
     try:
         parsed_gold = parse(
             f"\\boxed{{{expected}}}",
