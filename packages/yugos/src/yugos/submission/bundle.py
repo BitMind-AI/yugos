@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
-from yugos.inference.actions import RequiredModels
+from yugos.inference.actions import ModelChoice, RequiredModels, require_declared_fallback
 
 from .protocol import (
     Digest,
@@ -39,12 +39,21 @@ class BundleManifest(StrictModel):
     runtime: SubmissionRuntime
     files: dict[str, Digest] = Field(min_length=2)
     required_models: RequiredModels
+    fallback_model: ModelChoice | None = None
 
     @model_validator(mode="after")
     def required_files(self):
+        require_declared_fallback(self.fallback_model, self.required_models)
         if not {"model.py", "model.safetensors"}.issubset(self.files):
             raise ValueError("model.py and model.safetensors must be listed with their hashes")
         return self
+
+    @model_serializer(mode="wrap")
+    def preserve_existing_manifest(self, handler):
+        data = handler(self)
+        if self.fallback_model is None:
+            data.pop("fallback_model", None)
+        return data
 
 
 @dataclass(frozen=True)
@@ -151,6 +160,7 @@ def inspect_bundle(source: Path) -> PreparedMetadata:
         version=manifest.version,
         runtime=manifest.runtime,
         required_models=manifest.required_models,
+        fallback_model=manifest.fallback_model,
     )
 
 
@@ -245,5 +255,6 @@ def prepare_bundle(
             version=manifest.version,
             runtime=manifest.runtime,
             required_models=manifest.required_models,
+            fallback_model=manifest.fallback_model,
         ),
     )

@@ -543,8 +543,9 @@ def test_packager_rejects_invalid_dependencies_without_replacing_output(tmp_path
 
 
 @pytest.mark.parametrize("entrypoint", ["public", "module"])
+@pytest.mark.parametrize("declaration_format", ["array", "object", "fallback"])
 def test_installed_pack_cli_generates_manifest_without_research_or_hosting_dependencies(
-    tmp_path, monkeypatch, entrypoint
+    tmp_path, monkeypatch, entrypoint, declaration_format
 ):
     import subprocess
     import sys
@@ -556,7 +557,10 @@ def test_installed_pack_cli_generates_manifest_without_research_or_hosting_depen
     (source / "model.safetensors").write_bytes(b"weights")
     models = [{"provider_id": "p", "model_id": "m", "effort": "low"}]
     declaration = source / "models.json"
-    declaration.write_text(json.dumps(models))
+    config = models if declaration_format == "array" else {"required_models": models}
+    if declaration_format == "fallback":
+        config["fallback_model"] = models[0]
+    declaration.write_text(json.dumps(config))
     (source / "router.json").write_text('{"vocab":"tokenizer/vocab.json"}')
     (source / "tokenizer").mkdir()
     (source / "tokenizer/vocab.json").write_text('{"hello":1}')
@@ -590,7 +594,11 @@ for name in ('bittensor', 'brr', 'torch', 'modal'):
         )
     assert manifest["schema"] == "yugos.bundle.v4"
     assert manifest["name"] == source.name
-    assert manifest["required_models"] == models and "fallback" not in manifest
+    assert manifest["required_models"] == models
+    if declaration_format == "fallback":
+        assert manifest["fallback_model"] == models[0]
+    else:
+        assert "fallback_model" not in manifest
     assert inspect_bundle(output).required_models == tuple(ModelChoice(**m) for m in models)
 
 

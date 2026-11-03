@@ -46,6 +46,14 @@ def require_supported_models(
         raise ValueError(f"unsupported required models: {missing}")
 
 
+def require_declared_fallback(
+    fallback: ModelChoice | None, required: Collection[ModelChoice]
+) -> None:
+    """Keep the optional fallback inside the miner's signed model declaration."""
+    if fallback is not None and fallback not in required:
+        raise ValueError("fallback_model must also appear in required_models")
+
+
 class CallAction(BaseModel):
     """One provider generation constructed by the host."""
 

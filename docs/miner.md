@@ -108,8 +108,9 @@ my-router/
   encoder/             # optional nested assets
 ```
 
-`models.json` is a JSON array of every provider, model, and effort the router
-may call. Different efforts are different choices. Duplicates are rejected.
+`models.json` declares every provider, model, and effort the router may call.
+Different efforts are different choices. Duplicates are rejected. The existing
+array format remains supported:
 
 ```json
 [
@@ -119,7 +120,45 @@ may call. Different efforts are different choices. Duplicates are rejected.
 ```
 
 The service only runs choices it supports. A call outside this list scores that
-question zero. There is no fallback model.
+question zero. To declare one universal fallback, use the object format in the
+same `models.json` file:
+
+```json
+{
+  "required_models": [
+    {"provider_id": "provider-a", "model_id": "model-a", "effort": "low"},
+    {"provider_id": "provider-b", "model_id": "model-b", "effort": null}
+  ],
+  "fallback_model": {
+    "provider_id": "provider-b",
+    "model_id": "model-b",
+    "effort": null
+  }
+}
+```
+
+Package normally with `yugos pack ./my-router`. The fallback must also appear in
+`required_models`, including its exact effort. The packager validates both formats
+and copies the declarations into the hashed manifest. Unknown fields and malformed
+or undeclared choices are rejected. The object format may omit `fallback_model`;
+that and the original array format preserve behavior without a fallback. There is
+no separate settings file or fallback command-line flag.
+
+Use an updated packager for the object format and a hosted runtime supporting the
+fallback field. Existing array files and already-packaged bundles remain valid.
+If your router reads `models.json` directly, read `required_models` for the object
+format instead of assuming the root is an array.
+
+When the provider serving your selected model fails a call, the host first uses
+its free retries of unbilled rejections. A failure here means an error status, a
+refusal of the request, or an empty or failed answer. If the call still fails,
+the host sends the same request once to your fallback model, with the same
+conversation, tools and generation settings. There is no fallback chain. If the
+fallback also fails, or you declared none, the question is scored on what it did,
+which normally means incorrect. Both calls count toward your cost and execution
+time under the existing limits. Host-side failures, such as a lost call or the
+operator's provider credit, never use your fallback. Grader and simulator models
+never use it either.
 
 `model.py` defines `load_model(weights_path)`, returning an object with
 `route(input) -> ModelChoice`. It returns one provider/model/effort choice; it

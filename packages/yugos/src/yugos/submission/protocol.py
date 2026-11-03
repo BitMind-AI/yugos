@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from typing import Annotated, Literal, TextIO
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_serializer, model_validator
 
-from yugos.inference.actions import ModelChoice, RequiredModels
+from yugos.inference.actions import ModelChoice, RequiredModels, require_declared_fallback
 from yugos.inference.chat import ModelInput
 
 SCHEMA = "yugos.worker.v5"
@@ -62,6 +62,19 @@ class PreparedMetadata(StrictModel):
     version: str = Field(min_length=1, max_length=128)
     runtime: SubmissionRuntime
     required_models: RequiredModels
+    fallback_model: ModelChoice | None = None
+
+    @model_validator(mode="after")
+    def declared_fallback(self):
+        require_declared_fallback(self.fallback_model, self.required_models)
+        return self
+
+    @model_serializer(mode="wrap")
+    def preserve_existing_metadata(self, handler):
+        data = handler(self)
+        if self.fallback_model is None:
+            data.pop("fallback_model", None)
+        return data
 
 
 class Envelope(StrictModel):

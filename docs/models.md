@@ -19,6 +19,16 @@ prices. The response includes `sha256` for the card you just read.
 `card.roles` lists grader and simulator models. Those are operator calls.
 They are not extra models your router should declare.
 
+The card lists qualified choices and their reviewed prices and limits. A
+temporary outage does not remove a previously qualified SayGM model from the
+card, so a declared model can be briefly unavailable. Its calls then fail as
+provider errors. A new or coming-soon model must still qualify before a router
+may declare it. SayGM pricing continues to use `price_range.route_ceiling`, with
+actual charges settled afterward. Each admitted run keeps its pinned pricing card.
+
+See the [optional fallback model](miner.md) for handling provider failures
+without changing your router interface.
+
 ## Output allowance and spend
 
 Benchmark and provider limits bound generation, including reasoning where the
@@ -34,7 +44,8 @@ still apply, and an unfundable call is refused before dispatch.
 
 ## What you may declare
 
-`models.json` is a JSON array. One object per distinct choice:
+`models.json` accepts the existing JSON array format, with one object per distinct
+choice:
 
 ```json
 [
@@ -42,9 +53,13 @@ still apply, and an unfundable call is refused before dispatch.
 ]
 ```
 
+To declare a universal fallback, use an object with that same array under
+`required_models` and an optional `fallback_model` alongside it. The fallback must
+also appear in the array. See the [miner guide](miner.md) for the full example.
+The original array format and existing bundles continue to work without changes.
+
 `effort` may be `null`. A non-null effort is a different choice and must be
-repeated in `models.json` if `route` can return it. Duplicate choices are
-rejected.
+repeated in the declaration if `route` can return it. Duplicate choices are rejected.
 
 The known provider ids are `openai`, `anthropic`, `google`, `openrouter`,
 `venice`, `gm`, `engy`, `spacexai`, `nous`, `deepseek`, `chutes`, `near`, and
