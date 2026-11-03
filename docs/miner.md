@@ -149,24 +149,16 @@ fallback field. Existing array files and already-packaged bundles remain valid.
 If your router reads `models.json` directly, read `required_models` for the object
 format instead of assuming the root is an array.
 
-The host may use it once per logical generation when the selected primary is
-known unavailable, or its allowed primary attempts end in a confirmed unbilled
-availability rejection. Question-boundary execution makes one primary attempt
-before an eligible fallback; historical jobs retain their bounded retry policy.
-There is no fallback chain. The original conversation,
-tools and generation settings are preserved. Incompatible provider state or
-input limits prevent fallback; the host does not truncate the request. Ambiguous
-timeouts, partial output, invalid requests and exhausted budgets do not trigger
-it. Actual calls, costs and time count under the existing limits. Grader and
-simulator models never use the submission fallback.
-
-After a host interruption, completed questions retain their answers, grades,
-costs and timing. An unfinished question restarts from its original input, then
-the host runs any remaining questions. New calls use the run's remaining budget
-and count toward cost and execution time normally. An interrupted call is
-reconciled before restarting; lost-call charges are absorbed by the host.
-Completed provider calls remain charged even if their question later restarts.
-If the solver finished and only grading was interrupted, only grading is retried.
+When the provider serving your selected model fails a call, the host first uses
+its free retries of unbilled rejections. A failure here means an error status, a
+refusal of the request, or an empty or failed answer. If the call still fails,
+the host sends the same request once to your fallback model, with the same
+conversation, tools and generation settings. There is no fallback chain. If the
+fallback also fails, or you declared none, the question is scored on what it did,
+which normally means incorrect. Both calls count toward your cost and execution
+time under the existing limits. Host-side failures, such as a lost call or the
+operator's provider credit, never use your fallback. Grader and simulator models
+never use it either.
 
 `model.py` defines `load_model(weights_path)`, returning an object with
 `route(input) -> ModelChoice`. It returns one provider/model/effort choice; it

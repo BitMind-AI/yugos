@@ -19,15 +19,14 @@ prices. The response includes `sha256` for the card you just read.
 `card.roles` lists grader and simulator models. Those are operator calls.
 They are not extra models your router should declare.
 
-The card lists qualified choices and their reviewed prices and limits. Current
-route health is separate, at `/world/availability`. A temporary outage does not
-remove a previously qualified SayGM model from the card. Health is advisory and
-can change after discovery. Missing or stale health means unknown availability.
-A new or coming-soon model must still qualify before a router may declare it.
-SayGM pricing continues to use `price_range.route_ceiling`, with actual charges
-settled afterward. Each admitted run keeps its pinned pricing card.
+The card lists qualified choices and their reviewed prices and limits. A
+temporary outage does not remove a previously qualified SayGM model from the
+card, so a declared model can be briefly unavailable. Its calls then fail as
+provider errors. A new or coming-soon model must still qualify before a router
+may declare it. SayGM pricing continues to use `price_range.route_ceiling`, with
+actual charges settled afterward. Each admitted run keeps its pinned pricing card.
 
-See the [optional universal fallback](miner.md) for handling availability failures
+See the [optional fallback model](miner.md) for handling provider failures
 without changing your router interface.
 
 ## Output allowance and spend
