@@ -150,13 +150,23 @@ If your router reads `models.json` directly, read `required_models` for the obje
 format instead of assuming the root is an array.
 
 The host may use it once per logical generation when the selected primary is
-known unavailable, or its bounded retries end in a confirmed unbilled
-availability rejection. There is no fallback chain. The original conversation,
+known unavailable, or its allowed primary attempts end in a confirmed unbilled
+availability rejection. Question-boundary execution makes one primary attempt
+before an eligible fallback; historical jobs retain their bounded retry policy.
+There is no fallback chain. The original conversation,
 tools and generation settings are preserved. Incompatible provider state or
 input limits prevent fallback; the host does not truncate the request. Ambiguous
 timeouts, partial output, invalid requests and exhausted budgets do not trigger
 it. Actual calls, costs and time count under the existing limits. Grader and
 simulator models never use the submission fallback.
+
+After a host interruption, completed questions retain their answers, grades,
+costs and timing. An unfinished question restarts from its original input, then
+the host runs any remaining questions. New calls use the run's remaining budget
+and count toward cost and execution time normally. An interrupted call is
+reconciled before restarting; lost-call charges are absorbed by the host.
+Completed provider calls remain charged even if their question later restarts.
+If the solver finished and only grading was interrupted, only grading is retried.
 
 `model.py` defines `load_model(weights_path)`, returning an object with
 `route(input) -> ModelChoice`. It returns one provider/model/effort choice; it
