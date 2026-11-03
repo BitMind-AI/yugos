@@ -5782,7 +5782,7 @@ dev = [
 
 [[package]]
 name = "yugos-evals"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "packages/yugos-evals" }
 dependencies = [
     { name = "httpx" },

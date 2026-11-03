@@ -162,6 +162,12 @@ def prepare_task(task: Task, **options):
         task.scorer = [bigcodebench_scorer()]
         task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
     grader_version = _prepare_grading(task, name.split("/")[1], args)
+    if name in {"yugos_evals/boxed_math", "yugos_evals/math_answer"}:
+        from .scorers.math import reference_exclusion
+
+        for sample in task.dataset:
+            if reason := reference_exclusion(sample.target, comparison_version=2):
+                raise ValueError(f"{name}/{sample.id}: unsupported math reference: {reason}")
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
@@ -176,11 +182,19 @@ def prepare_task(task: Task, **options):
     )
 
 
-def _grading_components(name: str, args: dict):
-    if name == "math":
+def _grading_components(name: str, args: dict, version: int | None = None):
+    if name in {"math", "math_answer", "boxed_math"}:
         from .scorers.math import GRADER_VERSION, math_answer_scorer
 
-        return GRADER_VERSION, math_answer_scorer(answer_format="answer_line")
+        version = GRADER_VERSION if version is None else version
+        if version not in {1, GRADER_VERSION} or version == 1 and name != "math":
+            return None
+        return version, math_answer_scorer(
+            answer_format="answer_line" if name == "math" else "auto",
+            comparison_version=version,
+        )
+    if name == "bfcl":
+        return 1, None
     if name == "mbpp":
         from .scorers.mbpp import GRADER_VERSION, mbpp_with_imports
 
@@ -478,7 +492,7 @@ def build(
             solver = [module.banking_initializer(), solver]
         scorer = getattr(module, f"{domain}_scorer")()
     elif name == "math_answer":
-        scorer = module.math_answer_scorer()
+        scorer = module.math_answer_scorer(comparison_version=0)
     elif name == "reading":
         solver, scorer = module.reading_components(args.get("source", "belebele"))
     elif name == "cruxeval":
@@ -492,11 +506,11 @@ def build(
     elif name == "rubric_chat":
         scorer = module.rubric_chat_scorer()
     elif name == "boxed_math":
-        scorer = module.math_answer_scorer()
+        scorer = module.math_answer_scorer(comparison_version=0)
     if metrics is not None:
         options = {**options, "metrics": metrics}
     if grader_version:
-        components = _grading_components(name, args)
+        components = _grading_components(name, args, grader_version)
         if components is None or components[0] != grader_version:
             raise ValueError(f"unsupported {name} grader version: {grader_version}")
         scorer = components[1] or scorer

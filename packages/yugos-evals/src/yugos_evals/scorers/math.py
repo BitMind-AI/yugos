@@ -1,4 +1,4 @@
-"""Bounded Math-Verify grading with the frozen comparison rules."""
+"""Bounded, versioned math grading with frozen comparison compatibility."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from ._math_process import MathWorkerFailed, compare
 from ._outcome import Outcome, completion_gate, to_score
 from ._symbolic_products import VERSION, Unsupported, is_product_reference, parse_product
 
-GRADER_VERSION = 1
+GRADER_VERSION = 2
 SYMBOLIC_GRADER_VERSION = VERSION
 
 
@@ -58,18 +58,22 @@ def grade_math(gold: str, text: str, **options) -> Outcome:
         )
 
 
-def reference_exclusion(answer: str) -> str | None:
+def reference_exclusion(answer: str, *, comparison_version: int = 0) -> str | None:
     """Screen a reference with the same bounded, isolated comparison rules."""
     try:
-        return compare("reference", answer)
+        return compare("reference", answer, comparison_version=comparison_version)
     except MathWorkerFailed as exc:
         return f"unparseable_reference: math comparison {exc.cause}"
 
 
 @scorer(metrics=[mean(), stderr()])
-def math_answer_scorer(answer_format: str = "auto") -> Scorer:
-    """Grade the final answer against the target with Math-Verify (`grade_math`)."""
+def math_answer_scorer(
+    answer_format: str = "auto", comparison_version: int = GRADER_VERSION
+) -> Scorer:
+    """Grade the complete final answer with the selected comparison version."""
 
+    if comparison_version not in {0, 1, GRADER_VERSION}:
+        raise ValueError("unsupported math comparison version")
     if answer_format not in {"auto", "answer_line"}:
         raise ValueError("unsupported math answer format")
 
@@ -77,9 +81,9 @@ def math_answer_scorer(answer_format: str = "auto") -> Scorer:
         gated = completion_gate(state)
         if gated is not None:
             return to_score(gated)
-        options = {}
+        options = {"comparison_version": comparison_version}
         if answer_format == "answer_line":
-            options = {
+            options |= {
                 "answer_format": answer_format,
                 "question": state.input_text,
             }

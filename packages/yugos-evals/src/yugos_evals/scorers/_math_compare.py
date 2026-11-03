@@ -292,6 +292,7 @@ def grade_math(
     *,
     answer_format: str = "auto",
     question: str = "",
+    comparison_version: int = 0,
 ) -> Outcome:
     """Compare a response's final answer with the reference; parser failures never escape."""
     expected = (gold or "").strip()
@@ -305,6 +306,7 @@ def grade_math(
     from ._symbolic_products import compare_products
 
     context = response
+    answer_order = "auto"
     if answer_format == "answer_line":
         if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
             return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
@@ -319,6 +321,12 @@ def grade_math(
             return symbolic
     if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
+    if comparison_version == 2:
+        from ._math_checked import grade_math as checked_grade
+
+        return checked_grade(expected, response, unordered=answer_order == "unordered")
+    if comparison_version not in {0, 1}:
+        raise ValueError("unsupported math comparison version")
     try:
         parsed_gold = parse(
             f"\\boxed{{{expected}}}",
@@ -382,13 +390,21 @@ def _comma_parts(answer: str) -> list[str]:
     return [*parts, answer[start:]]
 
 
-def reference_exclusion(answer: str) -> str | None:
+def reference_exclusion(answer: str, *, comparison_version: int = 0) -> str | None:
     """Why `grade_math` cannot faithfully check this reference, or None.
 
     Prose answers, comma-separated parts outside a tuple, set or interval, a bare
     `\\log`, a reference that does not verify against itself, and one whose parse
     silently drops part of the expression are excluded.
     """
+    if comparison_version == 2:
+        from ._math_checked import reference_exclusion as checked_exclusion
+        from ._symbolic_products import is_product_reference
+
+        if not is_product_reference(answer):
+            return checked_exclusion(answer)
+    elif comparison_version not in {0, 1}:
+        raise ValueError("unsupported math comparison version")
     if _TEXT.search(answer):
         return "textual_reference: math-verify cannot compare prose answers"
     if _top_level_comma(answer):
