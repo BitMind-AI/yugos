@@ -1,7 +1,7 @@
 # yugos
 
 Subnet core for Yugos: competition scoring, the submission format, and the
-`yugos` (miner) and `yugos-validator` commands.
+`ycli` (miner) and `yugos-validator` commands.
 
 ```sh
 uv pip install "yugos @ git+https://github.com/BitMind-AI/yugos.git"

@@ -17,7 +17,7 @@ Pack it from this directory:
 
 ```sh
 export OPENROUTER_API_KEY=...
-yugos pack . --output ../starter-router.zip
+ycli pack . --output ../starter-router.zip
 yugos-evals pack build --benchmark aime2025 --limit 5 --out aime.pack.tar
 yugos-evals run --pack aime.pack.tar --bundle ../starter-router.zip --log-dir runs/starter
 ```
