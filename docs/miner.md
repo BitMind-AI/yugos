@@ -42,7 +42,7 @@ btcli subnet burn-cost 34
 btcli subnet register --wallet miner --hotkey default --netuid 34
 ```
 
-The hotkey name `default` is the one you pass to `yugos submit`. See the
+The hotkey name `default` is the one you pass to `ycli submit`. See the
 [Bittensor mining guide](https://guides.learnbittensor.org/miners/miners-btcli-guide)
 for wallet recovery and staking.
 
@@ -137,7 +137,7 @@ same `models.json` file:
 }
 ```
 
-Package normally with `yugos pack ./my-router`. The fallback must also appear in
+Package normally with `ycli pack ./my-router`. The fallback must also appear in
 `required_models`, including its exact effort. The packager validates both formats
 and copies the declarations into the hashed manifest. Unknown fields and malformed
 or undeclared choices are rejected. The object format may omit `fallback_model`;
@@ -192,7 +192,7 @@ inference mode, and keep request preprocessing separate from provider input.
 Old generator submissions must be rewritten and repackaged; the worker accepts
 only the routing interface.
 
-The archive must stay within 24 GiB and 4,096 files. `yugos pack` skips hidden
+The archive must stay within 24 GiB and 4,096 files. `ycli pack` skips hidden
 files, caches, other ZIPs, and `*.receipt.json`. It rejects symlinks. It writes
 `manifest.json` itself.
 
@@ -217,7 +217,7 @@ hosted service does not supply those keys. The runner reads the environment
 and does not load a `.env` file.
 
 ```sh
-yugos pack . --output router.zip
+ycli pack . --output router.zip
 yugos-evals pack build --benchmark aime2025 --limit 20 --out aime.pack.tar
 yugos-evals run --pack aime.pack.tar --bundle router.zip --log-dir runs/a
 ```
@@ -230,7 +230,7 @@ yugos-evals run --pack aime.pack.tar --bundle router.zip --log-dir runs/a
 Packaging is local. It does not use a wallet, the network, or the service.
 
 ```sh
-yugos pack ./my-router
+ycli pack ./my-router
 ```
 
 The ZIP is written to `my-router/submission-<UTC timestamp>.zip` and the
@@ -245,15 +245,15 @@ The default network is mainnet, subnet 34, at `https://upload.yugos.ai`.
 `--endpoint` or set `YUGOS_ENDPOINT`.
 
 ```sh
-yugos submit ./submission.zip --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
-yugos status ./submission.receipt.json --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
+ycli submit ./submission.zip --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
+ycli status ./submission.receipt.json --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
 ```
 
 After one successful testnet submit, pack again or reuse the ZIP and submit
 on mainnet with a new receipt. Do not reuse the testnet receipt.
 
 ```sh
-yugos submit ./submission.zip --wallet miner --hotkey default
+ycli submit ./submission.zip --wallet miner --hotkey default
 ```
 
 `submit` uploads the ZIP, confirms it, and publishes its commitment on chain. **Confirmation can reserve credits and start a paid evaluation.**
@@ -269,16 +269,16 @@ If you see `Submission limit reached`, wait for an earlier submission to leave
 that window, then retry. Resuming the same ZIP does not use another slot.
 
 ```sh
-yugos status ./submission.receipt.json --wallet miner --hotkey default
+ycli status ./submission.receipt.json --wallet miner --hotkey default
 ```
 
-`yugos status ./submission.zip` recovers the status link when the receipt is
+`ycli status ./submission.zip` recovers the status link when the receipt is
 missing. Status does not start evaluation.
 
 To drop an unfinished upload:
 
 ```sh
-yugos cancel-upload ./submission.receipt.json --wallet miner --hotkey default
+ycli cancel-upload ./submission.receipt.json --wallet miner --hotkey default
 ```
 
 That aborts storage only. A funded evaluation keeps running. Incomplete upload
@@ -286,7 +286,7 @@ sessions expire after 24 hours.
 
 ## Credits
 
-`yugos submit` opens a funding page when payment is required. The page shows the reservation, your balance, and the run. The minimum payment is $0.50; extra funds stay on your hotkey's balance. You can close the browser after payment and resume with the same receipt.
+`ycli submit` opens a funding page when payment is required. The page shows the reservation, your balance, and the run. The minimum payment is $0.50; extra funds stay on your hotkey's balance. You can close the browser after payment and resume with the same receipt.
 
 For the v0.2.0 contest, new evaluations reserve $300: $250 for model charges,
 $45 for compute, and $5 for evaluator services, including their respective fees.
@@ -297,15 +297,15 @@ See [Scoring](scoring.md) for the new pack and timing limits.
 The receipt's `status_url` returns you to that page. Quotes last one hour.
 Rerun `submit` with the same receipt and `--renew-funding` to review a new
 quote. Funds already received stay available. The private link lasts seven
-days. `yugos status` can issue a new link.
+days. `ycli status` can issue a new link.
 
 Each hotkey has its own balance and can spend only that balance.
 
 ```sh
-yugos credits claim --wallet miner --hotkey default
-yugos credits balance --wallet miner --hotkey default
-yugos credits history --wallet miner --hotkey default
-yugos credits refund --all --wallet miner --hotkey default \
+ycli credits claim --wallet miner --hotkey default
+ycli credits balance --wallet miner --hotkey default
+ycli credits history --wallet miner --hotkey default
+ycli credits refund --all --wallet miner --hotkey default \
   --receipt ./refund-001.json
 ```
 
@@ -344,7 +344,7 @@ are not competition scores: the live pack, prices, and hardware differ.
 | More funds needed | Open the status link and pay the shortfall, or add credits. |
 | Funding is held by an earlier run | Wait until that bill is final. Keep the ZIP and receipt. |
 | Funding page expired | Rerun `submit` with `--renew-funding` and the same receipt. |
-| You closed the CLI during payment | Open `status_url` from the receipt, or run `yugos status`. |
+| You closed the CLI during payment | Open `status_url` from the receipt, or run `ycli status`. |
 | Refund looked like it failed | Retry with the same `--receipt`. Do not start a second refund file. |
 | `cancel-upload` says the upload is complete | Storage is done. Use the status link for the run and refunds. |
 | A question scored zero | The router called a model that was not in `models.json`, returned its own answer, or made no call. |

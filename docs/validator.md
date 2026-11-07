@@ -129,13 +129,13 @@ stop. [PM2's application settings](https://pm2.keymetrics.io/docs/usage/applicat
 describe the supervisor options.
 
 ```sh
-yugos validator start
+ycli validator start
 pm2 logs yugos-validator
 pm2 save
 pm2 startup
 ```
 
-`yugos v start` is an alias. Run from the checkout root, or pass
+`ycli v start` is an alias. Run from the checkout root, or pass
 `--config /path/to/validator.config.js`. The command wraps `pm2 start` and
 preserves its output and exit status.
 

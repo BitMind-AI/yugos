@@ -37,7 +37,7 @@ inspect-modal = [
 neuron = ["bittensor>=11.0.2,<12", "httpx>=0.27,<1"]
 
 [project.scripts]
-yugos = "yugos.miner.cli:main"
+ycli = "yugos.miner.cli:main"
 yugos-validator = "yugos.validator:main"
 
 [project.entry-points."yugos.inspect_tasks"]

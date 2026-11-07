@@ -574,7 +574,7 @@ for name in ('bittensor', 'brr', 'torch', 'modal'):
     else:
         script += (
             "import runpy\n"
-            "sys.argv = ['yugos', 'pack', sys.argv[1]]\n"
+            "sys.argv = ['ycli', 'pack', sys.argv[1]]\n"
             "runpy.run_module('yugos.miner', run_name='__main__')\n"
         )
     result = subprocess.run(

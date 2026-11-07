@@ -85,7 +85,7 @@ Then:
 3. Pack and run a small public slice of each category. `yugos-evals list` prints the catalog.
 
 ```sh
-yugos pack . --output router.zip
+ycli pack . --output router.zip
 yugos-evals pack build --benchmark aime2025 --limit 20 --out aime.pack.tar
 yugos-evals run --pack aime.pack.tar --bundle router.zip --log-dir runs/a
 ```
@@ -96,20 +96,20 @@ yugos-evals run --pack aime.pack.tar --bundle router.zip --log-dir runs/a
 5. Submit the winner on testnet. Confirmation can lock about `$100` and start a paid eval. The receipt is written next to the ZIP. Keep it. Resume an interrupted upload by rerunning the same command.
 
 ```sh
-yugos pack . --output router.zip
-yugos submit router.zip --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
-yugos status router.receipt.json --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
+ycli pack . --output router.zip
+ycli submit router.zip --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
+ycli status router.receipt.json --network test --endpoint "$YUGOS_ENDPOINT" --wallet miner --hotkey default
 ```
 
-`yugos pack` writes `manifest.json` into the ZIP. Leave that file to the packer.
+`ycli pack` writes `manifest.json` into the ZIP. Leave that file to the packer.
 
 6. After one successful testnet submit, register the same hotkey on mainnet and submit a new receipt. Fund the coldkey with mainnet TAO first. Testnet TAO does not pay the mainnet fee. Do not reuse the testnet receipt.
 
 ```sh
 btcli subnet burn-cost 34
 btcli subnet register --wallet miner --hotkey default --netuid 34
-yugos submit router.zip --wallet miner --hotkey default
-yugos status router.receipt.json --wallet miner --hotkey default
+ycli submit router.zip --wallet miner --hotkey default
+ycli status router.receipt.json --wallet miner --hotkey default
 ```
 
 ## Docs

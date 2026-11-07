@@ -71,7 +71,7 @@ evaluated on the preparation host.
 ## Run a router locally
 
 ```sh
-yugos pack ./my-router --output router.zip
+ycli pack ./my-router --output router.zip
 yugos-evals pack build --benchmark aime2025 --limit 20 --out aime.pack.tar
 export OPENAI_API_KEY=...
 yugos-evals run --pack aime.pack.tar --bundle router.zip --log-dir runs/a
@@ -79,7 +79,7 @@ yugos-evals compare runs/a runs/b
 inspect view --log-dir runs/a/logs
 ```
 
-`yugos pack` builds the miner ZIP. `yugos-evals pack build` builds a
+`ycli pack` builds the miner ZIP. `yugos-evals pack build` builds a
 development `pack.tar` from public data. `--limit` and `--seed` choose a
 deterministic subset. `--arg NAME=JSON` passes extra task arguments.
 
