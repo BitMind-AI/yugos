@@ -153,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="Evaluate a router bundle on a pack locally.")
     run.add_argument("--pack", type=Path, required=True, help="pack.tar to evaluate")
-    run.add_argument("--bundle", type=Path, required=True, help="ZIP from `yugos pack`")
+    run.add_argument("--bundle", type=Path, required=True, help="ZIP from `ycli pack`")
     run.add_argument(
         "--max-cost",
         type=float,

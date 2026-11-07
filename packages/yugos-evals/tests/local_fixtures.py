@@ -1,4 +1,4 @@
-"""Synthetic packs, real `yugos pack` bundles and a scripted provider; no network or spend."""
+"""Synthetic packs, real `ycli pack` bundles and a scripted provider; no network or spend."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def load_model(weights_path):
 
 
 def make_bundle(root: Path, *, model=TEST_MODEL, source=ROUTER) -> Path:
-    """Package a trivial router with the real `yugos pack` command."""
+    """Package a trivial router with the real `ycli pack` command."""
     root.mkdir(parents=True)
     (root / "model.py").write_text(f"MODEL = {model!r}\n{source}")
     save_file({"w": np.zeros(1, dtype=np.float32)}, str(root / "model.safetensors"))
