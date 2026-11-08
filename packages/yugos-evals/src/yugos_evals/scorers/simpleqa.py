@@ -9,8 +9,6 @@ from inspect_evals.simpleqa.grader_templates import SIMPLEQA_TOOL_INSTRUCTIONS
 from inspect_evals.utils.scorers import schema_tool_graded_scorer
 from typing_extensions import TypedDict
 
-GRADER_VERSION = 1
-
 
 class _Judgment(TypedDict):
     grade: Literal["CORRECT", "INCORRECT", "NOT_ATTEMPTED"]

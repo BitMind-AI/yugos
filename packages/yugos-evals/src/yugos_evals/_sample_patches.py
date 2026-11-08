@@ -93,17 +93,25 @@ def _digest(value) -> str:
 
 
 def prepare_samples(task: Task, name: str):
-    """Apply reviewed edits only when every original field still matches its hash."""
+    """Apply reviewed edits only when every original field still matches its hash.
+
+    A field already holding its reviewed replacement is left alone, so preparing a
+    task twice is a no-op rather than a source-drift error.
+    """
     if name == "bfcl":
         _prepare_bfcl(task)
+    if name not in PATCHES:
+        return
     for sample in task.dataset:
-        changes = PATCHES.get(name, {}).get(str(sample.id), {})
+        changes = dict(PATCHES.get(name, {}).get(str(sample.id), {}))
         metadata = dict(sample.metadata or {})
-        for field, (expected_digest, _) in changes.items():
+        for field, (expected_digest, replacement) in list(changes.items()):
             actual = (
                 metadata.get(field[9:]) if field.startswith("metadata.") else getattr(sample, field)
             )
-            if _digest(actual) != expected_digest:
+            if actual == replacement:
+                del changes[field]
+            elif _digest(actual) != expected_digest:
                 raise ValueError(f"{name}/{sample.id}: reviewed original changed for {field}")
         for field, (_, replacement) in changes.items():
             replacement = deepcopy(replacement)

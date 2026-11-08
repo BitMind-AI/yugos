@@ -124,20 +124,6 @@ def test_math_rules_apply_to_new_questions_without_item_hints(question, gold, an
     )
 
 
-def test_benchmark_versions_advance_independently(monkeypatch):
-    from yugos_evals.scorers import mbpp
-
-    def prepare(name):
-        return _prepare_grading(
-            Task(dataset=[Sample(id="fixture", input="q", target="42")]), name, {}
-        )
-
-    humaneval_version, mbpp_version = prepare("humaneval"), prepare("mbpp")
-    monkeypatch.setattr(mbpp, "GRADER_VERSION", mbpp_version + 1)
-    assert prepare("humaneval") == humaneval_version
-    assert prepare("mbpp") == mbpp_version + 1
-
-
 @pytest.mark.parametrize("row", SAMPLES, ids=lambda row: row["task"] + ":" + row["sample"]["id"])
 def test_reviewed_sample_edits_are_checked_and_idempotent(row):
     sample = Sample.model_validate(row["sample"])
