@@ -453,6 +453,9 @@ def build(
     elif name in {"swe_bench", "swe_bench_verified_mini"}:
         if args.get("scorer"):
             raise ValueError("custom SWE-bench components need their own installed builder")
+        from yugos_evals.repo_history import base_history_only
+
+        setup = base_history_only()
         solver = module.swe_bench_agent_with_inspect_tool_support(
             tool_timeout=args.get("tool_timeout", module.DEFAULT_TOOL_TIMEOUT)
         )
