@@ -330,12 +330,11 @@ def _equal(gold, answer, *, unordered=False) -> bool:
         difference = simplify(exact(gold) - exact(answer))
         if difference.is_zero is True:
             return True
-        # Retain six-decimal approximations for explicit decimal answers. A
-        # relative bound keeps tiny nonzero values distinct.
+        # Accept a decimal answer correctly rounded to six places, whatever the
+        # magnitude of the reference.
         if gold.is_number and answer.is_number:
             if isinstance(gold, Float) or isinstance(answer, Float):
-                tolerance = min(Rational(1, 2_000_000), abs(exact(gold)) / 1_000_000)
-                return bool(abs(difference) <= tolerance)
+                return bool(abs(difference) <= Rational(1, 2_000_000))
     except (TypeError, AttributeError):
         pass
     return False
