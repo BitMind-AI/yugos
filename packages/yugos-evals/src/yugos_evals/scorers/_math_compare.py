@@ -6,7 +6,7 @@ import re
 
 from latex2sympy2_extended import NormalizationConfig, latex2sympy
 from latex2sympy2_extended.latex2sympy2 import ConversionConfig
-from sympy import Dummy, Eq, FiniteSet, Float, MatrixBase, Rational, Symbol, Tuple, simplify
+from sympy import Basic, Dummy, Eq, FiniteSet, Float, MatrixBase, Rational, Symbol, Tuple, simplify
 from sympy.core.function import AppliedUndef
 
 from yugos.evaluation.grades import GradeCode
@@ -219,6 +219,8 @@ def _parse(value: str):
         parsed = latex2sympy(value, normalization_config=_CONFIG, conversion_config=_CONVERSION)
     except Exception as exc:
         raise Unsupported("unparseable") from exc
+    if not isinstance(parsed, (Basic, MatrixBase)):
+        raise Unsupported("unsupported_parsed_answer")
     return parsed
 
 
@@ -256,7 +258,7 @@ def _unordered_equal(gold, answer) -> bool:
     return all(assign(index, set()) for index in range(len(gold)))
 
 
-def _equal(gold, answer) -> bool:
+def _equal(gold, answer, *, unordered=False) -> bool:
     if isinstance(gold, str) or isinstance(answer, str):
         return isinstance(gold, str) and isinstance(answer, str) and gold == answer
     if gold == answer:
@@ -288,17 +290,21 @@ def _equal(gold, answer) -> bool:
     elif isinstance(answer, MatrixBase) and answer.cols == 1 and isinstance(gold, Tuple):
         answer = Tuple(*answer)
     if isinstance(gold, MatrixBase) or isinstance(answer, MatrixBase):
-        return (
+        if not (
             isinstance(gold, MatrixBase)
             and isinstance(answer, MatrixBase)
-            and (gold.shape == answer.shape and all(_equal(g, a) for g, a in zip(gold, answer)))
-        )
+            and gold.shape == answer.shape
+        ):
+            return False
+        if unordered:
+            return _unordered_equal(gold, answer)
+        return all(_equal(g, a) for g, a in zip(gold, answer))
     if isinstance(gold, Tuple) or isinstance(answer, Tuple):
-        return (
-            isinstance(gold, Tuple)
-            and isinstance(answer, Tuple)
-            and (len(gold) == len(answer) and all(_equal(g, a) for g, a in zip(gold, answer)))
-        )
+        if not isinstance(gold, Tuple) or not isinstance(answer, Tuple):
+            return False
+        if unordered:
+            return _unordered_equal(gold, answer)
+        return len(gold) == len(answer) and all(_equal(g, a) for g, a in zip(gold, answer))
     if isinstance(gold, FiniteSet) or isinstance(answer, FiniteSet):
         return (
             isinstance(gold, FiniteSet)
@@ -370,7 +376,7 @@ def grade_math(
         return Outcome(GradeCode.INVALID_GOLD, status="unavailable")
     if not response:
         return Outcome(GradeCode.NOT_ATTEMPTED)
-    from ._symbolic_products import compare_products
+    from ._symbolic_products import compare_products, is_product_reference
 
     context = response
     answer_order = "auto"
@@ -382,10 +388,12 @@ def grade_math(
         if isinstance(prepared, Outcome):
             return prepared
         expected, response = prepared
-    if len(expected) <= MAX_MATH_TEXT_CHARS:
-        symbolic = compare_products(expected, response, context=context)
-        if symbolic is not None:
-            return symbolic
+    if len(expected) <= MAX_MATH_TEXT_CHARS and is_product_reference(expected):
+        try:
+            expression = _final(response)
+        except Unsupported:
+            expression = None
+        return compare_products(expected, expression, context=context)
     if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
     return _compare_answer(expected, response, unordered=answer_order == "unordered")
@@ -410,10 +418,7 @@ def _compare_answer(gold: str, text: str, *, unordered=False) -> Outcome:
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": str(exc)})
     if _integer_counterexample(reference, answer):
         return Outcome(GradeCode.INCORRECT)
-    if unordered and isinstance(reference, MatrixBase) and isinstance(answer, MatrixBase):
-        matched = reference.shape == answer.shape and _unordered_equal(reference, answer)
-    else:
-        matched = _equal(reference, answer)
+    matched = _equal(reference, answer, unordered=unordered)
     return Outcome(GradeCode.CORRECT, score=1) if matched else Outcome(GradeCode.INCORRECT)
 
 
@@ -438,12 +443,12 @@ def _comma_parts(answer: str) -> list[str]:
 
 def reference_exclusion(answer: str) -> str | None:
     """Report a reference format the comparison cannot interpret."""
-    from ._symbolic_products import compare_products
+    from ._symbolic_products import compare_products, is_product_reference
 
     if _top_level_comma(_unwrap_answer(answer)):
         return "unstructured_multi_part_reference"
-    symbolic = compare_products(answer, rf"\boxed{{{answer}}}")
-    if symbolic is not None:
+    if is_product_reference(answer):
+        symbolic = compare_products(answer, _unwrap_answer(answer))
         return None if symbolic.code == GradeCode.CORRECT else "unsupported_symbolic_product"
     try:
         _admit(_parse(answer))

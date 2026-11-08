@@ -36,21 +36,6 @@ def compact(text):
     return re.sub(r"\s+", "", text)
 
 
-def last_box(text):
-    start = text.rfind(r"\boxed{")
-    if start < 0:
-        return None
-    start += len(r"\boxed{")
-    depth = 1
-    for end in range(start, len(text)):
-        depth += (text[end] == "{") - (text[end] == "}")
-        if depth > 64:
-            return None
-        if depth == 0:
-            return text[start:end]
-    return None
-
-
 class Parser:
     def __init__(self, text):
         for command in (r"\left", r"\right", r"\displaystyle", r"\,", r"\!"):
@@ -310,19 +295,16 @@ def parse_product(expression, context=""):
     return factors(Parser(expression).parse(), environment, definitions(context), [MAX_TERMS * 4])
 
 
-def compare_products(reference, text, *, context=None):
-    """Return None outside this grammar, otherwise an exact or unresolved grade."""
-    if not is_product_reference(reference):
-        return None
+def compare_products(reference, expression, *, context=""):
+    """Compare a product reference with a complete final expression."""
     details = {"grading_repair": VERSION, "reference_unchanged": True}
-    expression = last_box(text[-MAX_TEXT:])
     try:
         gold = parse_product(reference)
     except (Unsupported, ArithmeticError, RecursionError):
         return Outcome(GradeCode.INVALID_GOLD, status="unavailable", details=details)
     try:
-        if expression is None:
-            raise Unsupported("missing final expression")
+        if expression is None or len(expression) > MAX_TEXT:
+            raise Unsupported("missing or oversized final expression")
         literal = re.fullmatch(r"([+-]?)([0-9]+)", compact(expression))
         if literal and gold.coefficient > 0:
             digits = literal[2].lstrip("0")
@@ -335,7 +317,7 @@ def compare_products(reference, text, *, context=None):
                 and max(gold.factorials, default=1) - 1 >= 4 * len(digits)
             ):
                 return Outcome(GradeCode.INCORRECT, details=details)
-        answer = parse_product(expression, (text if context is None else context)[-MAX_TEXT:])
+        answer = parse_product(expression, context[-MAX_TEXT:])
         gold_common = gold.factorials & answer.factorials
         left, right = gold.factorials - gold_common, answer.factorials - gold_common
         if gold.coefficient == answer.coefficient == 0:

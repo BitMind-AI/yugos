@@ -92,8 +92,36 @@ def test_existing_math_presentation_cases_keep_credit(case):
     assert outcome.code == GradeCode.CORRECT
 
 
-def test_nested_box_cannot_discard_outer_expression():
-    assert grade_math("2", r"\boxed{1+\boxed{2}}").score == 0
+@pytest.mark.parametrize("reference", ["2", r"\prod_{i=1}^{4}i!"])
+def test_nested_box_cannot_discard_outer_expression(reference):
+    assert grade_math(reference, rf"\boxed{{1+\boxed{{{reference}}}}}").score == 0
+
+
+@pytest.mark.parametrize(
+    "reference,answer",
+    [("(1,2,3)", "(3,2,1)"), ("1,2,3", "(3,2,1)"), ("(1,2,3)", "3,2,1")],
+)
+def test_unordered_answers_match_tuples_and_columns(reference, answer):
+    result = compare_math(
+        reference,
+        "ANSWER: " + answer,
+        answer_format="answer_line",
+        question="Enter the roots, separated by commas.",
+    )
+    assert result.code == GradeCode.CORRECT
+
+
+def test_unsupported_parser_result_leaves_a_scored_outcome(monkeypatch):
+    from yugos_evals.scorers import _math_compare
+
+    parse = _math_compare.latex2sympy
+    monkeypatch.setattr(
+        _math_compare,
+        "latex2sympy",
+        lambda value, **options: [1, 2] if value == "x" else parse(value, **options),
+    )
+    result = compare_math("2", r"\boxed{x}")
+    assert result.settled and result.code == GradeCode.INVALID_ANSWER
 
 
 def test_checked_comparison_keeps_cheap_exact_sum_refutation(monkeypatch):
