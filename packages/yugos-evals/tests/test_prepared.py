@@ -286,7 +286,6 @@ def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
 
     assert scorer_names(native) == ["math_answer_scorer"]
     assert scorer_names(prepared) == ["math_answer_scorer"]
-    assert questions[0].inspect_task["builder_args"]["grader_version"] == 2
     for label, task in (("native", native), ("prepared", prepared)):
         miner = ScriptedRouter("ANSWER: 2")
         log = run(task, miner, tmp_path / label)

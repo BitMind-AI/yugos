@@ -13,7 +13,7 @@ from inspect_ai.dataset import Sample
 from inspect_ai.scorer import Target
 
 from yugos_evals._sample_patches import PATCHES
-from yugos_evals.prepared import _prepare_grading, build
+from yugos_evals.prepared import _prepare_grading
 from yugos_evals.scorers.math import math_answer_scorer
 from yugos_evals.scorers.mbpp import mbpp_with_imports
 from yugos_evals.scorers.simpleqa import simpleqa_numeric_scorer
@@ -124,22 +124,6 @@ def test_math_rules_apply_to_new_questions_without_item_hints(question, gold, an
     )
 
 
-def test_new_grader_does_not_change_legacy_recipes():
-    sample = Sample(input="Compute.", target=r"\frac{1}{8}")
-    state = task_state(r"ANSWER: \(\frac{1}{8}\)")
-    for version, expected in [(0, "I"), (1, 1.0)]:
-        task = build(
-            options={"dataset": [sample]},
-            task="inspect_evals/math",
-            args={},
-            grader_version=version,
-        )
-        [score] = task.scorer
-        assert anyio.run(score, state, Target(sample.target)).value == expected
-    with pytest.raises(ValueError, match="grader version"):
-        build(options={"dataset": [sample]}, task="inspect_evals/math", args={}, grader_version=99)
-
-
 def test_benchmark_versions_advance_independently(monkeypatch):
     from yugos_evals.scorers import mbpp
 
@@ -148,9 +132,9 @@ def test_benchmark_versions_advance_independently(monkeypatch):
             Task(dataset=[Sample(id="fixture", input="q", target="42")]), name, {}
         )
 
-    math_version, mbpp_version = prepare("math"), prepare("mbpp")
+    humaneval_version, mbpp_version = prepare("humaneval"), prepare("mbpp")
     monkeypatch.setattr(mbpp, "GRADER_VERSION", mbpp_version + 1)
-    assert prepare("math") == math_version
+    assert prepare("humaneval") == humaneval_version
     assert prepare("mbpp") == mbpp_version + 1
 
 

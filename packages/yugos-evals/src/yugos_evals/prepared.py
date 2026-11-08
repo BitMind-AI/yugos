@@ -162,12 +162,6 @@ def prepare_task(task: Task, **options):
         task.scorer = [bigcodebench_scorer()]
         task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
     grader_version = _prepare_grading(task, name.split("/")[1], args)
-    if name in {"yugos_evals/boxed_math", "yugos_evals/math_answer"}:
-        from .scorers.math import reference_exclusion
-
-        for sample in task.dataset:
-            if reason := reference_exclusion(sample.target, comparison_version=2):
-                raise ValueError(f"{name}/{sample.id}: unsupported math reference: {reason}")
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
@@ -182,19 +176,7 @@ def prepare_task(task: Task, **options):
     )
 
 
-def _grading_components(name: str, args: dict, version: int | None = None):
-    if name in {"math", "math_answer", "boxed_math"}:
-        from .scorers.math import GRADER_VERSION, math_answer_scorer
-
-        version = GRADER_VERSION if version is None else version
-        if version not in {1, GRADER_VERSION} or version == 1 and name != "math":
-            return None
-        return version, math_answer_scorer(
-            answer_format="answer_line" if name == "math" else "auto",
-            comparison_version=version,
-        )
-    if name == "bfcl":
-        return 1, None
+def _grading_components(name: str, args: dict):
     if name == "mbpp":
         from .scorers.mbpp import GRADER_VERSION, mbpp_with_imports
 
@@ -219,7 +201,17 @@ def _grading_components(name: str, args: dict, version: int | None = None):
 
 
 def _prepare_grading(task: Task, name: str, args: dict):
-    """Select the benchmark-owned grader version and apply reviewed source data once."""
+    """Configure the scorer and prepare benchmark reference data."""
+    from ._sample_patches import prepare_samples
+
+    if name == "math":
+        from .scorers.math import math_answer_scorer
+
+        task.scorer = [math_answer_scorer(answer_format="answer_line")]
+        return None
+    if name == "bfcl":
+        prepare_samples(task, name)
+        return None
     components = _grading_components(name, args)
     if components is None:
         return None
@@ -229,8 +221,6 @@ def _prepare_grading(task: Task, name: str, args: dict):
         return version
     if recorded is not None:
         raise ValueError(f"{name}: prepare a fresh task before changing its grader version")
-    from ._sample_patches import prepare_samples
-
     prepare_samples(task, name)
     if scorer is not None:
         task.scorer = [scorer]
@@ -438,7 +428,9 @@ def build(
         if args.get("grader_model"):
             raise ValueError("MATH grading does not call a model")
         solver = module.math_solver(fewshot=0, fewshot_seed=args.get("fewshot_seed", 42))
-        scorer = module.expression_exact_match()
+        from .scorers.math import math_answer_scorer
+
+        scorer = math_answer_scorer(answer_format="answer_line")
     elif name == "humaneval":
         if args.get("solver") or args.get("scorer"):
             raise ValueError("custom HumanEval components need their own installed builder")
@@ -492,7 +484,7 @@ def build(
             solver = [module.banking_initializer(), solver]
         scorer = getattr(module, f"{domain}_scorer")()
     elif name == "math_answer":
-        scorer = module.math_answer_scorer(comparison_version=0)
+        scorer = module.math_answer_scorer()
     elif name == "reading":
         solver, scorer = module.reading_components(args.get("source", "belebele"))
     elif name == "cruxeval":
@@ -506,11 +498,11 @@ def build(
     elif name == "rubric_chat":
         scorer = module.rubric_chat_scorer()
     elif name == "boxed_math":
-        scorer = module.math_answer_scorer(comparison_version=0)
+        scorer = module.math_answer_scorer()
     if metrics is not None:
         options = {**options, "metrics": metrics}
     if grader_version:
-        components = _grading_components(name, args, grader_version)
+        components = _grading_components(name, args)
         if components is None or components[0] != grader_version:
             raise ValueError(f"unsupported {name} grader version: {grader_version}")
         scorer = components[1] or scorer

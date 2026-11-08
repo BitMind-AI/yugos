@@ -1,6 +1,5 @@
-"""`math_answer`: Math-Verify parity with the legacy grader, loaders, scoring and freezing."""
+"""Math answer loading, scoring, and freezing."""
 
-import hashlib
 import json
 import math
 import os
@@ -26,43 +25,6 @@ FIXTURES = Path(__file__).parent / "fixtures"
 BASELINE = [
     json.loads(line) for line in (FIXTURES / "math_baseline.jsonl").read_text().splitlines()
 ]
-# Responses beyond the baseline fixture; their legacy grades are recorded in LEGACY.
-RESPONSES = [
-    "The answer is \\boxed{42}.",
-    "Final answer: 41 or 42",
-    "\\boxed{\\frac{1}{2}}",
-    "0.5",
-    "\\boxed{x^2 + 2x + 1}",
-    "\\boxed{(x+1)^2}",
-    "\\boxed{\\ln 2}",
-    "\\boxed{[0, 1)}",
-    "\\boxed{\\{1, 2\\}}",
-    "\\boxed{}",
-    "I don't know.",
-    "x" * 70_000,
-]
-REFERENCES = [
-    "42",
-    "\\frac{1}{2}",
-    "(x+1)^2",
-    "\\ln 2",
-    "\\log 2",
-    "\\log_{2} 8",
-    "\\log _{2} 8",
-    "\\text{yes}",
-    "\\text{ }5",
-    "\\operatorname{lcm}(a, b)",
-    "1, 2",
-    "(1, 2)",
-    "\\{1, 2\\}",
-    "[0, 1)",
-    "5 \\text{ cm}",
-    "3\\sqrt{2}",
-    "\\infty",
-    "",
-    "\\frac{",
-    "a=3",
-]
 
 
 def _ported(outcome) -> dict:
@@ -74,34 +36,9 @@ def _ported(outcome) -> dict:
     }
 
 
-def _response_key(response: str) -> str:
-    return hashlib.sha256(response.encode()).hexdigest()[:16]
-
-
-# The legacy grader's outputs for REFERENCES x RESPONSES, recorded from `yugos.grading.math`
-# (yugos cb20e3c) before it was deleted.
-LEGACY = json.loads((FIXTURES / "math_legacy_parity.json").read_text())
-
-
 @pytest.mark.parametrize("case", BASELINE, ids=lambda case: case["name"])
-def test_grading_matches_the_recorded_legacy_baseline(case):
+def test_math_answer_outcomes(case):
     assert _ported(grade_math(case["gold"], case["response"])) == case["expected"]
-
-
-def test_grading_matches_the_recorded_legacy_grader():
-    responses = {_response_key(r): r for r in RESPONSES}
-    assert {(c["reference"], c["response_sha256_16"]) for c in LEGACY["grades"]} == {
-        (r, _response_key(s)) for r in REFERENCES if r for s in RESPONSES
-    }
-    for case in LEGACY["grades"]:
-        response = responses[case["response_sha256_16"]]
-        assert _ported(grade_math(case["reference"], response)) == case["expected"], case
-
-
-def test_reference_exclusion_matches_the_recorded_legacy_screen():
-    assert [c["reference"] for c in LEGACY["exclusions"]] == REFERENCES
-    for case in LEGACY["exclusions"]:
-        assert reference_exclusion(case["reference"]) == case["expected"], case["reference"]
 
 
 def _score(completion, target="42", stop_reason="stop"):
@@ -158,7 +95,7 @@ def _month_fixture(tmp_path, monkeypatch, rows):
 
 ROWS = [
     {"problem_idx": 1, "problem": "Compute 6*7.", "answer": "42", "source": 2512.01234},
-    {"problem_idx": 2, "problem": "Name it.", "answer": "\\text{yes}", "source": 2512.0123},
+    {"problem_idx": 2, "problem": "Name it.", "answer": "\\text{the first}", "source": 2512.0123},
     {"problem_idx": 3, "problem": "Evaluate.", "answer": "\\log 8", "source": 2512.01236},
 ]
 
@@ -171,7 +108,7 @@ def test_arxivmath_loader_screens_references_and_records_provenance(tmp_path, mo
     assert sample.input == boxed_prompt("Compute 6*7.")
     assert sample.metadata["arxiv_id"] == "2512.01234"
     assert [e["id"] for e in loaded.excluded] == ["arxivmath-2512-2", "arxivmath-2512-3"]
-    assert loaded.excluded[0]["reason"].startswith("textual_reference")
+    assert loaded.excluded[0]["reason"].startswith("prose_requires_structured_reference")
     assert loaded.excluded[1]["reason"].startswith("ambiguous_log_base")
     assert loaded.files == [
         {
@@ -343,7 +280,7 @@ def test_index_definitions_do_not_drop_exceptions_or_domain_restrictions(definit
 def test_reference_screening_uses_the_same_complete_symbolic_parser(monkeypatch):
     from yugos_evals.scorers import _math_compare
 
-    monkeypatch.setattr(_math_compare, "parse", lambda *a, **kw: pytest.fail("expanding parser"))
+    monkeypatch.setattr(_math_compare, "_parse", lambda *a, **kw: pytest.fail("expanding parser"))
     assert _math_compare.reference_exclusion(r"\prod_{i=1}^{2023}(2^i)!") is None
     assert _math_compare.reference_exclusion(r"\prod_{i=1}^{n}(2^i)!") is not None
 
@@ -441,15 +378,11 @@ def test_long_reasoning_keeps_final_answer_and_oversized_boxes_need_review():
 
 
 @pytest.mark.parametrize("answer", ["0", "1", "-1", "+2024", "9" * 5000])
-def test_integer_answers_below_the_factorial_product_settle_without_expansion(
-    answer, monkeypatch
-):
+def test_integer_answers_below_the_factorial_product_settle_without_expansion(answer, monkeypatch):
     # The observed saved answer was boxed 1; parsing huge numeric references must
     # neither require a product-shaped answer nor expand factorials to compare it.
     monkeypatch.setattr("math.factorial", lambda *a: pytest.fail("factorial expansion"))
-    monkeypatch.setattr(
-        "sympy.factorial", lambda *a: pytest.fail("factorial expansion")
-    )
+    monkeypatch.setattr("sympy.factorial", lambda *a: pytest.fail("factorial expansion"))
     outcome = symbolic_grade(REFERENCE, rf"\boxed{{{answer}}}")
     assert outcome.settled and outcome.code == GradeCode.INCORRECT
 

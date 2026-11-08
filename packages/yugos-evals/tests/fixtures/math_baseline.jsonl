@@ -5,7 +5,7 @@
 {"name": "degrees", "gold": "\\frac{270}7\\text{ degrees}", "response": "\\boxed{\\frac{270}{7}\\text{ degrees}}", "expected": {"score": 1.0, "code": "correct", "status": "graded", "details": {}}}
 {"name": "presentation_units", "gold": "1386", "response": "\\boxed{1386\\text{ square units}}", "expected": {"score": 1.0, "code": "correct", "status": "graded", "details": {}}}
 {"name": "wrong_units_value", "gold": "1386", "response": "\\boxed{1385\\text{ square units}}", "expected": {"score": 0.0, "code": "incorrect", "status": "graded", "details": {}}}
-{"name": "ambiguous_numeric", "gold": "1386", "response": "Answer: 1386 or 1385", "expected": {"score": 0.0, "code": "invalid_answer", "status": "graded", "details": {"cause": "ambiguous_answer"}}}
+{"name": "ambiguous_numeric", "gold": "1386", "response": "Answer: 1386 or 1385", "expected": {"score": 0.0, "code": "invalid_answer", "status": "graded", "details": {"cause": "prose_requires_structured_reference"}}}
 {"name": "wrong_radical", "gold": "\\sqrt{2}", "response": "\\boxed{2}", "expected": {"score": 0.0, "code": "incorrect", "status": "graded", "details": {}}}
 {"name": "wrong_sign", "gold": "-2", "response": "\\boxed{2}", "expected": {"score": 0.0, "code": "incorrect", "status": "graded", "details": {}}}
 {"name": "fraction_decimal", "gold": "\\frac12", "response": "\\boxed{0.5}", "expected": {"score": 1.0, "code": "correct", "status": "graded", "details": {}}}

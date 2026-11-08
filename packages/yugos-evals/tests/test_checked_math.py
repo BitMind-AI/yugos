@@ -1,4 +1,4 @@
-"""Coverage for versioned math answer comparison."""
+"""Coverage for math answer comparison."""
 
 import json
 from pathlib import Path
@@ -26,7 +26,7 @@ from yugos_evals.scorers.math import grade_math, reference_exclusion
     ],
 )
 def test_equivalent_complete_answers(gold, answer):
-    assert grade_math(gold, rf"\boxed{{{answer}}}", comparison_version=2).score == 1
+    assert grade_math(gold, rf"\boxed{{{answer}}}").score == 1
 
 
 @pytest.mark.parametrize(
@@ -37,6 +37,7 @@ def test_equivalent_complete_answers(gold, answer):
         (r"\frac{300}{2^{2053}}", r"\frac{\binom{2053}{400}}{2^{2053}}"),
         (r"\frac{300}{2^{2053}}", "0"),
         (r"f(x)=x^2", r"f(n)=n^3"),
+        (r"h(x)=x^2", r"h(t)=x^2"),
         ("4", r"4\text{ when }x>0"),
         ("2", r"2\text{ or }3"),
         ("2", "2\nANSWER: 3"),
@@ -49,12 +50,12 @@ def test_equivalent_complete_answers(gold, answer):
     ],
 )
 def test_distinct_or_ambiguous_answers_score_zero(gold, answer):
-    assert grade_math(gold, rf"\boxed{{{answer}}}", comparison_version=2).score == 0
+    assert grade_math(gold, rf"\boxed{{{answer}}}").score == 0
 
 
 def test_last_explicit_answer_overrides_previous_box():
-    assert grade_math("2", "\\boxed{2}\nANSWER: 3", comparison_version=2).score == 0
-    assert grade_math("3", "\\boxed{2}\nANSWER: 3", comparison_version=2).score == 1
+    assert grade_math("2", "\\boxed{2}\nANSWER: 3").score == 0
+    assert grade_math("3", "\\boxed{2}\nANSWER: 3").score == 1
 
 
 @pytest.mark.parametrize(
@@ -68,7 +69,7 @@ def test_last_explicit_answer_overrides_previous_box():
     ],
 )
 def test_unsupported_reference_requires_review_at_preparation(reference):
-    assert reference_exclusion(reference, comparison_version=2)
+    assert reference_exclusion(reference)
 
 
 @pytest.mark.parametrize(
@@ -87,61 +88,17 @@ def test_existing_math_presentation_cases_keep_credit(case):
         "ANSWER: " + case["answer"],
         answer_format="answer_line",
         question=case["problem"],
-        comparison_version=2,
     )
     assert outcome.code == GradeCode.CORRECT
 
 
 def test_nested_box_cannot_discard_outer_expression():
-    assert grade_math("2", r"\boxed{1+\boxed{2}}", comparison_version=2).score == 0
-
-
-def test_prepared_tasks_restore_each_supported_comparison_version():
-    import anyio
-    from evals_fakes import task_state
-    from inspect_ai._util.registry import registry_params
-    from inspect_ai.dataset import Sample
-    from inspect_ai.scorer import Target
-
-    from yugos_evals.prepared import build
-
-    gold = r"\frac34"
-    response = r"\boxed{\frac68}"
-    for task_name, versions in [
-        ("yugos_evals/boxed_math", [0, 2]),
-        ("inspect_evals/math", [1, 2]),
-    ]:
-        for version in versions:
-            task = build(
-                options={"dataset": [Sample(id="q", input="Compute", target=gold)]},
-                task=task_name,
-                args={},
-                grader_version=version,
-            )
-            completion = "ANSWER: " + response if task_name == "inspect_evals/math" else response
-            scorer = task.scorer[0]
-            assert registry_params(scorer)["comparison_version"] == version
-            result = anyio.run(scorer, task_state(completion), Target(gold))
-            assert result.value == 1
-
-
-def test_preparation_requires_a_supported_reference():
-    from inspect_ai.dataset import MemoryDataset, Sample
-
-    from yugos_evals.prepared import prepare_task
-    from yugos_evals.tasks.boxed_math import boxed_math
-
-    task = boxed_math()
-    task.dataset = MemoryDataset(
-        [Sample(id="family", input="Find all functions", target="f(x)=cx+d")]
-    )
-    with pytest.raises(ValueError, match="unsupported math reference"):
-        prepare_task(task, source="test", workload_class="math_code")
+    assert grade_math("2", r"\boxed{1+\boxed{2}}").score == 0
 
 
 def test_checked_comparison_keeps_cheap_exact_sum_refutation(monkeypatch):
     from yugos_evals.scorers import _math_process
 
     monkeypatch.setattr(_math_process, "TIMEOUT_S", 3)
-    outcome = grade_math("7", r"\boxed{3+\sum_{k=1}^{100000000}(1-f(k))}", comparison_version=2)
+    outcome = grade_math("7", r"\boxed{3+\sum_{k=1}^{100000000}(1-f(k))}")
     assert outcome.code == GradeCode.INCORRECT

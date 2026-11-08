@@ -31,7 +31,7 @@ def main():
                 grade_math(request["gold"], request["text"], **request.get("options", {}))
             )
         elif request["operation"] == "reference":
-            result = reference_exclusion(request["gold"], **request.get("options", {}))
+            result = reference_exclusion(request["gold"])
         else:
             raise ValueError("unknown math operation")
     json.dump(result, sys.stdout)
