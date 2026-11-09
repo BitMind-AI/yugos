@@ -430,7 +430,8 @@ def build(
         solver = module.math_solver(fewshot=0, fewshot_seed=args.get("fewshot_seed", 42))
         from .scorers.math import math_answer_scorer
 
-        scorer = math_answer_scorer(answer_format="answer_line")
+        # Recipes frozen with the native scorer select it by name at restoration.
+        scorer = [math_answer_scorer(answer_format="answer_line"), module.expression_exact_match()]
     elif name == "humaneval":
         if args.get("solver") or args.get("scorer"):
             raise ValueError("custom HumanEval components need their own installed builder")
