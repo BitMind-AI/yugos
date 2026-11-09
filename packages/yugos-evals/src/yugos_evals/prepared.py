@@ -17,8 +17,6 @@ from inspect_ai.solver import generate, multiple_choice, prompt_template, system
 
 from yugos.inspect_engine import freeze_task
 
-_HUMANEVAL_GRADER_VERSION = 1
-
 # Explicit installed implementations; pack arguments cannot choose a Python import.
 _MODULES = {
     **{
@@ -157,76 +155,54 @@ def prepare_task(task: Task, **options):
     if name.startswith("inspect_evals/tau2_"):
         options["required_roles"] = tuple(set(options.get("required_roles", ())) | {"user"})
     if name == "inspect_evals/bigcodebench":
-        from yugos_evals.scorers.python_unittest import GRADER_VERSION, bigcodebench_scorer
+        from yugos_evals.scorers.python_unittest import bigcodebench_scorer
 
         task.scorer = [bigcodebench_scorer()]
-        task.metadata = {**(task.metadata or {}), "unittest_supervisor_version": GRADER_VERSION}
-    grader_version = _prepare_grading(task, name.split("/")[1], args)
+    _prepare_grading(task, name.split("/")[1], args)
     return freeze_task(
         task,
         builder="yugos_evals.prepared",
         origin={"task": name, "args": args},
-        builder_args={
-            "task": name,
-            "args": args,
-            "fewshot_samples": fewshot_samples,
-            **({"grader_version": grader_version} if grader_version is not None else {}),
-        },
+        builder_args={"task": name, "args": args, "fewshot_samples": fewshot_samples},
         **options,
     )
 
 
-def _grading_components(name: str, args: dict):
-    if name == "mbpp":
-        from .scorers.mbpp import GRADER_VERSION, mbpp_with_imports
+def _yugos_scorer(name: str, args: dict):
+    """The installed Yugos scorer that replaces a benchmark's native grader, if any."""
+    if name == "math":
+        from .scorers.math import math_answer_scorer
 
-        return GRADER_VERSION, mbpp_with_imports()
-    if name == "humaneval":
-        return _HUMANEVAL_GRADER_VERSION, None
+        return math_answer_scorer(answer_format="answer_line")
+    if name == "mbpp":
+        from .scorers.mbpp import mbpp_with_imports
+
+        return mbpp_with_imports()
     if name in {"simpleqa", "simpleqa_verified"} and args.get("scorer", "tool") == "tool":
         from inspect_evals.simpleqa.grader_templates import (
             SIMPLEQA_GRADER_TEMPLATE,
             SIMPLEQA_VERIFIED_GRADER_TEMPLATE,
         )
 
-        from .scorers.simpleqa import GRADER_VERSION, simpleqa_numeric_scorer
+        from .scorers.simpleqa import simpleqa_numeric_scorer
 
         template = (
             SIMPLEQA_VERIFIED_GRADER_TEMPLATE
             if name.endswith("verified")
             else SIMPLEQA_GRADER_TEMPLATE
         )
-        return GRADER_VERSION, simpleqa_numeric_scorer(template)
+        return simpleqa_numeric_scorer(template)
     return None
 
 
 def _prepare_grading(task: Task, name: str, args: dict):
-    """Configure the scorer and prepare benchmark reference data."""
+    """Apply reviewed reference data and install the Yugos scorer where one exists."""
     from ._sample_patches import prepare_samples
 
-    if name == "math":
-        from .scorers.math import math_answer_scorer
-
-        task.scorer = [math_answer_scorer(answer_format="answer_line")]
-        return None
-    if name == "bfcl":
-        prepare_samples(task, name)
-        return None
-    components = _grading_components(name, args)
-    if components is None:
-        return None
-    version, scorer = components
-    recorded = (task.metadata or {}).get("grader_version")
-    if recorded == version:
-        return version
-    if recorded is not None:
-        raise ValueError(f"{name}: prepare a fresh task before changing its grader version")
     prepare_samples(task, name)
+    scorer = _yugos_scorer(name, args)
     if scorer is not None:
         task.scorer = [scorer]
-    task.metadata = {**(task.metadata or {}), "grader_version": version}
-    task.version = f"{task.version}+yugos-{name}.{version}"
-    return version
 
 
 def _mbpp_template(task: Task) -> str:
@@ -248,9 +224,13 @@ def build(
     task: str,
     args: dict,
     fewshot_samples: list[dict] = (),
-    grader_version: int = 0,
+    **recorded,
 ) -> Task:
-    """Build native solvers, agents, tools and scorers without calling source factories."""
+    """Build native solvers, agents, tools and scorers without calling source factories.
+
+    `recorded` holds fields earlier recipes stored, such as `grader_version`; they
+    no longer affect the build, which always grades with the installed scorers.
+    """
     if task not in _MODULES:
         raise ValueError(f"unknown prepared task: {task}")
     module = importlib.import_module(_MODULES[task])
@@ -428,10 +408,7 @@ def build(
         if args.get("grader_model"):
             raise ValueError("MATH grading does not call a model")
         solver = module.math_solver(fewshot=0, fewshot_seed=args.get("fewshot_seed", 42))
-        from .scorers.math import math_answer_scorer
-
-        # Recipes frozen with the native scorer select it by name at restoration.
-        scorer = [math_answer_scorer(answer_format="answer_line"), module.expression_exact_match()]
+        scorer = module.expression_exact_match()
     elif name == "humaneval":
         if args.get("solver") or args.get("scorer"):
             raise ValueError("custom HumanEval components need their own installed builder")
@@ -502,9 +479,9 @@ def build(
         scorer = module.math_answer_scorer()
     if metrics is not None:
         options = {**options, "metrics": metrics}
-    if grader_version:
-        components = _grading_components(name, args)
-        if components is None or components[0] != grader_version:
-            raise ValueError(f"unsupported {name} grader version: {grader_version}")
-        scorer = components[1] or scorer
+    yugos_scorer = _yugos_scorer(name, args)
+    if yugos_scorer is not None:
+        # MATH keeps its native scorer, which calls no model, so recipes frozen with
+        # it still select it by name at restoration.
+        scorer = [yugos_scorer, scorer] if name == "math" else yugos_scorer
     return Task(**options, solver=solver, scorer=scorer, setup=setup)

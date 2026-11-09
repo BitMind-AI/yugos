@@ -1338,7 +1338,6 @@ def test_bigcodebench_freeze_and_restore_selects_supervised_scorer(monkeypatch):
         entry("bigcodebench"), task=native, sandbox=code_sandbox(DIGEST_IMAGE)
     )
     assert question.inspect_task["scorer"] == "bigcodebench_scorer"
-    assert question.inspect_task["metadata"]["unittest_supervisor_version"] == 2
     [(restored, _)] = restore_tasks([question])
     from inspect_ai._util.registry import registry_info
 

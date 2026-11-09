@@ -7,8 +7,6 @@ from inspect_ai.model import ModelOutput
 from inspect_ai.scorer import accuracy, scorer, stderr
 from inspect_evals.mbpp.mbpp import find_code, verify
 
-GRADER_VERSION = 1
-
 
 def _test_environment(code: str, imports: str) -> str:
     """Insert test imports after a docstring and future imports, before executable code."""

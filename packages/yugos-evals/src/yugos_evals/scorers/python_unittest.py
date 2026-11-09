@@ -18,7 +18,6 @@ from ._outcome import Outcome, completion_gate, to_score
 
 RUNNER = files(__package__).joinpath("python_unittest_runner.py").read_text(encoding="utf-8")
 VERIFY_TIMEOUT = 180  # Each trusted test invokes the candidate in a separate process.
-GRADER_VERSION = 2
 
 
 def library_names(value) -> tuple[str, ...]:
