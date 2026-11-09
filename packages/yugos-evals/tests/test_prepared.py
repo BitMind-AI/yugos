@@ -285,14 +285,14 @@ def test_prepared_math_grades_without_calling_a_model(monkeypatch, tmp_path):
         return names
 
     assert scorer_names(native) == ["math_answer_scorer"]
-    assert scorer_names(prepared) == ["math_answer_scorer"]
-    assert questions[0].inspect_task["builder_args"]["grader_version"] == 1
+    # Restoration keeps the native scorer so recipes frozen with it still select it.
+    assert scorer_names(prepared) == ["math_answer_scorer", "expression_exact_match"]
     for label, task in (("native", native), ("prepared", prepared)):
         miner = ScriptedRouter("ANSWER: 2")
         log = run(task, miner, tmp_path / label)
         assert log.status == "success"
         [sample] = log.samples
-        assert list(sample.scores) == ["math_answer_scorer"]
+        assert list(sample.scores) == scorer_names(task)
         assert sample.scores["math_answer_scorer"].value == 1.0
         assert len(miner.calls) == 1
         assert "Look at the following two expressions" not in miner.seen()
@@ -696,3 +696,16 @@ def test_agentbench_restores_native_submission_and_match_grading(
         assert len(seen) == 1 and "private answer" not in str(seen[0].messages)
         requests.append(seen[0])
     assert requests[0] == requests[1]
+
+
+def test_recipes_frozen_with_the_native_math_scorer_still_restore():
+    from inspect_ai.scorer._scorer import unique_scorer_name
+
+    from yugos_evals.prepared import build
+
+    sample = Sample(input="Compute.", target="2")
+    task = build(options={"dataset": [sample]}, task="inspect_evals/math", args={})
+    names: list[str] = []
+    for scorer in task.scorer:
+        names.append(unique_scorer_name(scorer, names))
+    assert names == ["math_answer_scorer", "expression_exact_match"]

@@ -1,97 +1,35 @@
-"""Math-Verify answer grading, and the reference checks sources apply before packing.
-
-The default auto format preserves Yugos's frozen legacy math rules: the reference is boxed and
-parsed with Math-Verify, the response's boxed (else last) expression is parsed
-with shorthand normalization, and the two must verify strictly. References the
-grader cannot check faithfully are excluded when a source is loaded
-(`reference_exclusion`), not graded; no LLM-judge fallback is used.
-"""
+"""Math answer comparison and reference screening."""
 
 from __future__ import annotations
 
 import re
 
-from math_verify import (
-    ExprExtractionConfig,
-    LatexExtractionConfig,
-    LatexNormalizationConfig,
-    parse,
-    verify,
-)
+from latex2sympy2_extended import NormalizationConfig, latex2sympy
+from latex2sympy2_extended.latex2sympy2 import ConversionConfig
+from sympy import Basic, Dummy, Eq, FiniteSet, Float, MatrixBase, Rational, Symbol, Tuple, simplify
+from sympy.core.function import AppliedUndef
 
 from yugos.evaluation.grades import GradeCode
 
 from ._outcome import Outcome
 
 MAX_MATH_TEXT_CHARS = 65_536
-
-_PREDICTION_EXTRACTION = (
-    LatexExtractionConfig(
-        boxed_match_priority=0,
-        normalization_config=LatexNormalizationConfig(
-            basic_latex=True,
-            units=True,
-            # Gold uses shorthand such as `\frac43` and `\sqrt2`; accept the same
-            # notation from a response.
-            malformed_operators=True,
-            nits=False,
-            boxed="all",
-            equations=False,
-        ),
-    ),
-    ExprExtractionConfig(),
-)
-_GOLD_EXTRACTION = (
-    LatexExtractionConfig(
-        boxed_match_priority=0,
-        normalization_config=LatexNormalizationConfig(
-            basic_latex=True,
-            units=True,
-            malformed_operators=True,
-            nits=True,
-            boxed="all",
-            equations=False,
-        ),
-    ),
-    ExprExtractionConfig(),
-)
-# The gold parse without unit normalization or a bare-number fallback.
-_STRICT_GOLD_EXTRACTION = (
-    LatexExtractionConfig(
-        boxed_match_priority=0,
-        normalization_config=LatexNormalizationConfig(
-            basic_latex=True,
-            units=False,
-            malformed_operators=True,
-            nits=True,
-            boxed="all",
-            equations=False,
-        ),
-    ),
-)
 _PLAIN_NUMBER = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
-_EXPLICIT_LINE = re.compile(r"(?im)^\s*(?:final\s+)?answer\s*[:=]\s*(.+?)\s*$")
-# Math-Verify reads a bare \log as base 10; sources such as ArXivMath mean natural
-# logarithms. A subscript, even after a space (\log _{2}), names the base.
-_BARE_LOG = re.compile(r"\\log(?![a-zA-Z])(?!\s*_)")
-# Words in a text box are prose; operator names such as \operatorname{lcm} are math.
-_TEXT = re.compile(r"\\(?:text|textrm|textbf|textit|textsf|texttt|mbox)\s*\{[^{}]*[a-zA-Z]")
+_CONFIG = NormalizationConfig(units=False, malformed_operators=True, nits=True, boxed="none")
+_CONVERSION = ConversionConfig(lowercase_symbols=False)
 
 
-def _ambiguous_numeric_answer(gold: str, text: str) -> bool:
-    if not _PLAIN_NUMBER.fullmatch(gold):
-        return False
-    lines = _EXPLICIT_LINE.findall(text)
-    return bool(lines and len(_PLAIN_NUMBER.findall(lines[-1])) != 1)
+class Unsupported(ValueError):
+    """The answer cannot be interpreted without discarding meaningful content."""
 
 
 def _integer_counterexample(gold, response) -> bool:
     """Refute a formal identity before SymPy expands a huge finite sum.
 
-    Undefined functions have no supplied definition in the frozen comparison.
+    Undefined functions have no supplied definition in the comparison.
     Any identity with a numeric integer must hold when those functions are zero.
     An exact, different integer under that interpretation proves a mismatch;
-    matching or unresolved interpretations prove nothing and use normal verify.
+    matching or unresolved interpretations prove nothing and use the usual comparison.
     """
     from sympy import Integer, Sum
     from sympy.core.function import AppliedUndef
@@ -194,7 +132,7 @@ def _strip_answer_units(value: str, units: str) -> str:
 
 
 def _line_answers(expected: str, response: str, units: str, answer_order: str):
-    """Prepare the explicit final field; Math-Verify still owns expression normalization."""
+    """Normalize the explicit final field for comparison."""
     from inspect_evals.math.utils import extract_answer
 
     expected, response = _unwrap_answer(expected), _unwrap_answer(extract_answer(response))
@@ -252,38 +190,175 @@ def _line_answers(expected: str, response: str, units: str, answer_order: str):
     return expected, rf"\boxed{{{response}}}"
 
 
-def _same_math_values(gold, answer, unordered: bool) -> bool:
-    """Compare coordinates structurally, and unordered roots without losing multiplicity."""
-    from sympy import MatrixBase, Tuple
+def _parse(value: str):
+    value = _unwrap_answer(value)
+    value = re.sub(
+        r"(?<=\S)\s*\\text\{\s*(?:degrees|(?:(?:square|cubic)\s+)?units)\s*\}$",
+        "",
+        value,
+        flags=re.I,
+    )
+    # Use explicit multiplication between a numeric coefficient and a binomial.
+    value = re.sub(r"(\d)\s*(\\(?:d|t)?binom)", r"\1\\cdot\2", value)
+    literal = re.fullmatch(r"\\(?:text|textrm|mbox)\{([^{}]+)\}", value)
+    if literal:
+        if not re.fullmatch(r"[A-Za-z]+", literal[1].strip()):
+            raise Unsupported("prose_requires_structured_reference")
+        return literal[1].strip().casefold()
+    if value.casefold() in {"yes", "no", "finite", "infinite"}:
+        return value.casefold()
+    if re.search(
+        r"\\(?:text|textrm|mbox)|\b(?:there|where|for|all|when|otherwise|and|or)\b", value, re.I
+    ):
+        raise Unsupported("prose_requires_structured_reference")
+    if re.search(r"\\log(?![a-zA-Z])(?!\s*_)", value):
+        raise Unsupported("ambiguous_log_base")
+    if not value or r"\boxed" in value:
+        raise Unsupported("unparseable")
+    try:
+        parsed = latex2sympy(value, normalization_config=_CONFIG, conversion_config=_CONVERSION)
+    except Exception as exc:
+        raise Unsupported("unparseable") from exc
+    if not isinstance(parsed, (Basic, MatrixBase)):
+        raise Unsupported("unsupported_parsed_answer")
+    return parsed
 
-    if unordered:
-        gold = Tuple(*gold) if isinstance(gold, MatrixBase) and gold.cols == 1 else gold
-        answer = Tuple(*answer) if isinstance(answer, MatrixBase) and answer.cols == 1 else answer
+
+def _definition(value):
+    if isinstance(value, Eq) and isinstance(value.lhs, AppliedUndef):
+        args = value.lhs.args
+        if len(args) == 1 and isinstance(args[0], Symbol):
+            return value.lhs.func, args[0], value.rhs
+    return None
+
+
+def _admit(value):
+    definition = _definition(value)
+    if definition and definition[2].free_symbols - {definition[1]}:
+        raise Unsupported("parameter_family_requires_structured_reference")
+
+
+def _unordered_equal(gold, answer) -> bool:
+    """Match each value once, including overlapping decimal approximations."""
+    gold, answer = tuple(gold), tuple(answer)
+    if len(gold) != len(answer):
+        return False
+    matched = {}
+
+    def assign(index, seen):
+        for candidate, value in enumerate(answer):
+            if candidate in seen or not _equal(gold[index], value):
+                continue
+            seen.add(candidate)
+            if candidate not in matched or assign(matched[candidate], seen):
+                matched[candidate] = index
+                return True
+        return False
+
+    return all(assign(index, set()) for index in range(len(gold)))
+
+
+def _equal(gold, answer, *, unordered=False) -> bool:
+    if isinstance(gold, str) or isinstance(answer, str):
+        return isinstance(gold, str) and isinstance(answer, str) and gold == answer
+    if gold == answer:
+        return True
+    gdef, adef = _definition(gold), _definition(answer)
+    if gdef and adef:
+        argument = Dummy()
+        return gdef[0] == adef[0] and _equal(
+            gdef[2].subs(gdef[1], argument), adef[2].subs(adef[1], argument)
+        )
+    if isinstance(gold, Eq) and not isinstance(answer, Eq):
+        if (
+            (gdef and answer.free_symbols <= {gdef[1]})
+            or (gold.lhs.is_number and _equal(gold.lhs, gold.rhs))
+            or (isinstance(gold.lhs, Symbol) and gold.lhs not in gold.rhs.free_symbols)
+        ):
+            return _equal(gold.rhs, answer)
+    if isinstance(answer, Eq) and not isinstance(gold, Eq):
+        if isinstance(answer.lhs, Symbol) and answer.lhs not in answer.rhs.free_symbols:
+            return _equal(gold, answer.rhs)
+    if isinstance(gold, Eq) or isinstance(answer, Eq):
+        return (
+            isinstance(gold, Eq)
+            and isinstance(answer, Eq)
+            and (_equal(gold.lhs, answer.lhs) and _equal(gold.rhs, answer.rhs))
+        )
     if isinstance(gold, MatrixBase) and gold.cols == 1 and isinstance(answer, Tuple):
         gold = Tuple(*gold)
     elif isinstance(answer, MatrixBase) and answer.cols == 1 and isinstance(gold, Tuple):
         answer = Tuple(*answer)
-    if isinstance(gold, Tuple) != isinstance(answer, Tuple):
-        return False
-    if unordered and isinstance(gold, Tuple) and isinstance(answer, Tuple):
-        if len(gold) != len(answer):
+    if isinstance(gold, MatrixBase) or isinstance(answer, MatrixBase):
+        if not (
+            isinstance(gold, MatrixBase)
+            and isinstance(answer, MatrixBase)
+            and gold.shape == answer.shape
+        ):
             return False
-        matched = {}
-
-        def assign(index, seen):
-            for candidate in range(len(answer)):
-                if candidate in seen or not verify(
-                    [gold[index]], [answer[candidate]], strict=True, timeout_seconds=0
-                ):
-                    continue
-                seen.add(candidate)
-                if candidate not in matched or assign(matched[candidate], seen):
-                    matched[candidate] = index
-                    return True
+        if unordered:
+            return _unordered_equal(gold, answer)
+        return all(_equal(g, a) for g, a in zip(gold, answer))
+    if isinstance(gold, Tuple) or isinstance(answer, Tuple):
+        if not isinstance(gold, Tuple) or not isinstance(answer, Tuple):
             return False
+        if unordered:
+            return _unordered_equal(gold, answer)
+        return len(gold) == len(answer) and all(_equal(g, a) for g, a in zip(gold, answer))
+    if isinstance(gold, FiniteSet) or isinstance(answer, FiniteSet):
+        return (
+            isinstance(gold, FiniteSet)
+            and isinstance(answer, FiniteSet)
+            and _unordered_equal(gold, answer)
+        )
+    # Relational predicates and intervals must describe the same complete set.
+    if (
+        gold.is_Relational
+        or answer.is_Relational
+        or gold.func.__name__ == "And"
+        or answer.func.__name__ == "And"
+    ):
+        try:
+            return gold.as_set() == answer.as_set()
+        except (NotImplementedError, AttributeError):
+            return False
+    try:
 
-        return all(assign(index, set()) for index in range(len(gold)))
-    return bool(verify([gold], [answer], strict=True, timeout_seconds=0))
+        def exact(value):
+            return value.replace(lambda x: isinstance(x, Float), lambda x: Rational(str(x)))
+
+        difference = simplify(exact(gold) - exact(answer))
+        if difference.is_zero is True:
+            return True
+        # Accept a decimal answer correctly rounded to six places, whatever the
+        # magnitude of the reference.
+        if gold.is_number and answer.is_number:
+            if isinstance(gold, Float) or isinstance(answer, Float):
+                return bool(abs(difference) <= Rational(1, 2_000_000))
+    except (TypeError, AttributeError):
+        pass
+    return False
+
+
+def _final(text: str) -> str:
+    boxes = []
+    position = 0
+    while (start := text.find(r"\boxed{", position)) >= 0:
+        depth, end = 1, start + len(r"\boxed{")
+        while end < len(text) and depth:
+            depth += int(text[end] == "{") - int(text[end] == "}")
+            end += 1
+        boxes.append((start, end, depth))
+        position = end
+    lines = list(re.finditer(r"(?im)^\s*(?:final\s+)?answer\s*[:=]\s*(.+?)\s*$", text))
+    if lines and (not boxes or lines[-1].start() > boxes[-1][0]):
+        return lines[-1][1]
+    if not boxes:
+        return text.strip()
+    start, end, depth = boxes[-1]
+    if depth:
+        raise Unsupported("incomplete_final_box")
+    return text[start + len(r"\boxed{") : end - 1]
 
 
 def grade_math(
@@ -300,11 +375,10 @@ def grade_math(
         return Outcome(GradeCode.INVALID_GOLD, status="unavailable")
     if not response:
         return Outcome(GradeCode.NOT_ATTEMPTED)
-    if answer_format == "auto" and _ambiguous_numeric_answer(expected, response):
-        return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "ambiguous_answer"})
-    from ._symbolic_products import compare_products
+    from ._symbolic_products import compare_products, is_product_reference
 
     context = response
+    answer_order = "auto"
     if answer_format == "answer_line":
         if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
             return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
@@ -313,58 +387,42 @@ def grade_math(
         if isinstance(prepared, Outcome):
             return prepared
         expected, response = prepared
-    if len(expected) <= MAX_MATH_TEXT_CHARS:
-        symbolic = compare_products(expected, response, context=context)
-        if symbolic is not None:
-            return symbolic
+    if len(expected) <= MAX_MATH_TEXT_CHARS and is_product_reference(expected):
+        try:
+            expression = _final(response)
+        except Unsupported:
+            expression = None
+        return compare_products(expected, expression, context=context)
     if max(len(expected), len(response), len(question)) > MAX_MATH_TEXT_CHARS:
         return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "input_too_long"})
+    return _compare_answer(expected, response, unordered=answer_order == "unordered")
+
+
+def _compare_answer(gold: str, text: str, *, unordered=False) -> Outcome:
+    """Compare the complete final answer with its reference."""
     try:
-        parsed_gold = parse(
-            f"\\boxed{{{expected}}}",
-            extraction_config=_STRICT_GOLD_EXTRACTION
-            if answer_format == "answer_line"
-            else _GOLD_EXTRACTION,
-            fallback_mode="no_fallback",
-            parsing_timeout=0,
-        )
-        if not parsed_gold:
-            return Outcome(
-                GradeCode.INVALID_GOLD, status="unavailable", details={"cause": "unparseable"}
-            )
-        parsed_response = parse(
-            response,
-            extraction_config=_STRICT_GOLD_EXTRACTION
-            if answer_format == "answer_line"
-            else _PREDICTION_EXTRACTION,
-            fallback_mode="no_fallback",
-            parsing_timeout=0,
-        )
-        if not parsed_response:
-            return Outcome(GradeCode.INVALID_ANSWER, details={"cause": "unparseable"})
-        if len(parsed_gold) == len(parsed_response) == 1 and _integer_counterexample(
-            parsed_gold[0], parsed_response[0]
-        ):
-            return Outcome(GradeCode.INCORRECT)
-        if answer_format == "answer_line":
-            matched = len(parsed_gold) == len(parsed_response) == 1 and _same_math_values(
-                parsed_gold[0], parsed_response[0], answer_order == "unordered"
-            )
+        reference = _parse(gold)
+        _admit(reference)
+    except Unsupported as exc:
+        return Outcome(GradeCode.INVALID_GOLD, status="unavailable", details={"cause": str(exc)})
+    try:
+        final = _final(text)
+        if isinstance(reference, str):
+            raw = _unwrap_answer(final)
+            literal = re.fullmatch(r"\\(?:text|textrm|mbox)\{([^{}]+)\}", raw)
+            answer = (literal[1] if literal else raw).strip().casefold()
         else:
-            matched = bool(verify(parsed_gold, parsed_response, strict=True, timeout_seconds=0))
-    except Exception as exc:  # noqa: BLE001 - one response must not abort a scoring run.
-        return Outcome(
-            GradeCode.GRADER_ERROR,
-            status="error",
-            details={"component": "parser", "error_type": type(exc).__name__},
-        )
-    if matched:
-        return Outcome(GradeCode.CORRECT, score=1.0)
-    return Outcome(GradeCode.INCORRECT)
+            answer = _parse(final)
+    except Unsupported as exc:
+        return Outcome(GradeCode.INVALID_ANSWER, details={"cause": str(exc)})
+    if _integer_counterexample(reference, answer):
+        return Outcome(GradeCode.INCORRECT)
+    matched = _equal(reference, answer, unordered=unordered)
+    return Outcome(GradeCode.CORRECT, score=1) if matched else Outcome(GradeCode.INCORRECT)
 
 
 def _top_level_comma(answer: str) -> bool:
-    """Detect answer lists that are not a tuple, set or interval Math-Verify can compare."""
+    """Detect answer lists that are not a tuple, set or interval."""
     return len(_comma_parts(answer)) > 1
 
 
@@ -383,60 +441,16 @@ def _comma_parts(answer: str) -> list[str]:
 
 
 def reference_exclusion(answer: str) -> str | None:
-    """Why `grade_math` cannot faithfully check this reference, or None.
+    """Report a reference format the comparison cannot interpret."""
+    from ._symbolic_products import compare_products, is_product_reference
 
-    Prose answers, comma-separated parts outside a tuple, set or interval, a bare
-    `\\log`, a reference that does not verify against itself, and one whose parse
-    silently drops part of the expression are excluded.
-    """
-    if _TEXT.search(answer):
-        return "textual_reference: math-verify cannot compare prose answers"
-    if _top_level_comma(answer):
-        return (
-            "unstructured_multi_part_reference: comma-separated parts outside a tuple, "
-            "set or interval"
-        )
-    if _BARE_LOG.search(answer):
-        return (
-            "ambiguous_log_base: math-verify reads bare \\log as base 10, so an equivalent "
-            "\\ln answer grades incorrect"
-        )
-    from ._symbolic_products import compare_products
-
-    symbolic = compare_products(answer, rf"\boxed{{{answer}}}")
-    if symbolic is not None:
-        return (
-            None
-            if symbolic.code == GradeCode.CORRECT
-            else "unparseable_reference: unsupported symbolic product"
-        )
-    probe = grade_math(answer, f"\\boxed{{{answer}}}")
-    if probe.code == GradeCode.INVALID_GOLD:
-        return "unparseable_reference: invalid expected answer"
-    if probe.code != GradeCode.CORRECT:
-        return f"unparseable_reference: math reference could not be verified: {probe.code.value}"
-    # The grader normalizes units and may fall back to a bare number; an
-    # independent LaTeX-only parse exposes references it silently truncates.
-    boxed = f"\\boxed{{{answer}}}"
+    if _top_level_comma(_unwrap_answer(answer)):
+        return "unstructured_multi_part_reference"
+    if is_product_reference(answer):
+        symbolic = compare_products(answer, _unwrap_answer(answer))
+        return None if symbolic.code == GradeCode.CORRECT else "unsupported_symbolic_product"
     try:
-        graded = parse(
-            boxed,
-            extraction_config=_GOLD_EXTRACTION,
-            fallback_mode="no_fallback",
-            parsing_timeout=0,
-        )
-        complete = parse(
-            boxed,
-            extraction_config=_STRICT_GOLD_EXTRACTION,
-            fallback_mode="no_fallback",
-            parsing_timeout=0,
-        )
-        whole = bool(complete) and (
-            verify(graded, complete, strict=True, timeout_seconds=0)
-            and verify(complete, graded, strict=True, timeout_seconds=0)
-        )
-    except Exception as exc:  # noqa: BLE001 - one reference must not abort a dataset load.
-        return f"unparseable_reference: completeness probe raised {type(exc).__name__}"
-    if not whole:
-        return "partial_reference_parse: the grader's parse drops part of the reference"
+        _admit(_parse(answer))
+    except Unsupported as exc:
+        return str(exc)
     return None

@@ -1,4 +1,4 @@
-"""Bounded Math-Verify grading with the frozen comparison rules."""
+"""Bounded math answer grading."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from ._math_process import MathWorkerFailed, compare
 from ._outcome import Outcome, completion_gate, to_score
 from ._symbolic_products import VERSION, Unsupported, is_product_reference, parse_product
 
-GRADER_VERSION = 1
 SYMBOLIC_GRADER_VERSION = VERSION
 
 
@@ -68,7 +67,7 @@ def reference_exclusion(answer: str) -> str | None:
 
 @scorer(metrics=[mean(), stderr()])
 def math_answer_scorer(answer_format: str = "auto") -> Scorer:
-    """Grade the final answer against the target with Math-Verify (`grade_math`)."""
+    """Grade the complete final answer."""
 
     if answer_format not in {"auto", "answer_line"}:
         raise ValueError("unsupported math answer format")

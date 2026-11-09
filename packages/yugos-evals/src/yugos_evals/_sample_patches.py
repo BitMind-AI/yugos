@@ -1,6 +1,7 @@
 """Reviewed native-task data edits, guarded against upstream source drift."""
 
 import json
+import re
 from copy import deepcopy
 from hashlib import sha256
 
@@ -93,6 +94,8 @@ def _digest(value) -> str:
 
 def prepare_samples(task: Task, name: str):
     """Apply reviewed edits only when every original field still matches its hash."""
+    if name == "bfcl":
+        _prepare_bfcl(task)
     for sample in task.dataset:
         changes = PATCHES.get(name, {}).get(str(sample.id), {})
         metadata = dict(sample.metadata or {})
@@ -110,3 +113,30 @@ def prepare_samples(task: Task, name: str):
                 setattr(sample, field, replacement)
         if changes:
             sample.metadata = metadata
+
+
+def _prepare_bfcl(task: Task):
+    """Align typed boolean references with explicit Java/JS string tool contracts."""
+    from inspect_evals.bfcl.utils import normalize_function_name
+
+    for sample in task.dataset:
+        metadata = deepcopy(sample.metadata or {})
+        if metadata.get("language") not in {"java", "javascript"}:
+            continue
+        schemas = {
+            normalize_function_name(tool["name"]): tool.get("parameters", {}).get("properties", {})
+            for tool in metadata.get("tools", [])
+        }
+        for answer in metadata.get("parsed_ground_truth", []):
+            for function, arguments in answer.items():
+                for parameter, values in arguments.items():
+                    schema = schemas.get(normalize_function_name(function), {}).get(parameter, {})
+                    description = schema.get("description", "").lower()
+                    if schema.get("type") == "string" and re.search(
+                        r"\bboolean\b.*\bstring representation\b", description
+                    ):
+                        arguments[parameter] = [
+                            str(value).lower() if isinstance(value, bool) else value
+                            for value in values
+                        ]
+        sample.metadata = metadata
