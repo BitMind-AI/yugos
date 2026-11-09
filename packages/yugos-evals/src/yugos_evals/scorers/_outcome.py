@@ -72,14 +72,22 @@ def empty_answer() -> Outcome:
     return Outcome(GradeCode.INCORRECT, details={"cause": "empty_answer"})
 
 
+def _message_limit_reached(state: TaskState) -> bool:
+    """Inspect ends a sample at its message limit with the conversation at that size."""
+    limit = state.message_limit
+    return limit is not None and len(state.messages) >= limit
+
+
 def completion_gate(state: TaskState) -> Outcome | None:
     """The outcome for an answer that must not be graded, as Yugos grading gates it.
 
     A sample that ended at a limit before the router answered has no completion
     and is not attempted; a truncated answer is a graded zero; an answer the
-    provider blocked is graded incorrect; a completion that ended for another
-    reason than `stop` (a tool call) needs review. An empty answer that stopped
-    normally (the model may have only reasoned) is an attempt, graded incorrect.
+    provider blocked is graded incorrect; an agent still calling a tool when its
+    message limit ended the sample gave no final answer and is graded incorrect;
+    a completion that ended for another reason than `stop` needs review. An empty
+    answer that stopped normally (the model may have only reasoned) is an
+    attempt, graded incorrect.
     """
     if not state.output.choices:
         return Outcome(GradeCode.NOT_ATTEMPTED, details={"cause": "no_response"})
@@ -90,6 +98,11 @@ def completion_gate(state: TaskState) -> Outcome | None:
         )
     if reason in _BLOCKED:
         return Outcome(GradeCode.INCORRECT, details={"cause": "provider_blocked"})
+    if reason == "tool_calls" and _message_limit_reached(state):
+        return Outcome(
+            GradeCode.INCORRECT,
+            details={"cause": "message_limit_reached", "stop_reason": reason},
+        )
     if reason != "stop":
         return Outcome(
             GradeCode.NEEDS_REVIEW,
