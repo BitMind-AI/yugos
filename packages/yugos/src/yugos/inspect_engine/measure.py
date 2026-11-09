@@ -125,7 +125,7 @@ def _unscored_grade(
     """The Yugos grade for a sample the scorer left unscored, as legacy grading gates it.
 
     A router non-answer decides first: truncation is a settled zero, a task limit
-    reached mid tool loop is not attempted, and a router failure or deadline has
+    reached mid tool loop is incorrect, and a router failure or deadline has
     no grade. Otherwise the grader could not
     establish a grade (invalid reference, grader error, unusable judgment,
     unknown completion status), which needs review and leaves the category
@@ -140,7 +140,10 @@ def _unscored_grade(
         )
     if unfinished:
         return GradingResult(
-            score=0.0, grader=grader, code=GradeCode.NOT_ATTEMPTED, details=details
+            score=0.0,
+            grader=grader,
+            code=GradeCode.INCORRECT,
+            details={**details, "cause": "task_limit_mid_tool_loop"},
         )
     if router_failed:
         return None

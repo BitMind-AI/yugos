@@ -299,9 +299,9 @@ def test_an_unscored_truncated_answer_is_the_routers_settled_zero(tmp_path):
 
 @pytest.mark.parametrize(
     "limit,code,status",
-    [("message", "not_attempted", "graded"), ("operator", "needs_review", "unavailable")],
+    [("message", "incorrect", "graded"), ("operator", "needs_review", "unavailable")],
 )
-def test_a_task_limit_mid_tool_loop_is_not_attempted(tmp_path, limit, code, status):
+def test_a_task_limit_mid_tool_loop_is_incorrect(tmp_path, limit, code, status):
     # Catches an agent that spends its own message budget on tool calls voiding the run.
     question = exact_question("q", "Paris")
     router = ScriptedRouter({question.prompt: reply("", finish_reason="tool_calls")})
