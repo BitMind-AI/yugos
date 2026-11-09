@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("inspect_ai")
 
-from inspect_ai.log import read_eval_log  # noqa: E402
+from inspect_ai.log import EvalSampleLimit, read_eval_log  # noqa: E402
 from inspect_ai.scorer import Score  # noqa: E402
 from inspect_fakes import ScriptedRouter, exact_question, pack_task, reply, run  # noqa: E402
 
@@ -295,6 +295,26 @@ def test_an_unscored_truncated_answer_is_the_routers_settled_zero(tmp_path):
     assert row.measurement.non_answer and row.failure_owner is None
     [chat] = chat_categories(log, router, ["q"])
     assert chat.execution_complete and chat.grades == {"q": Decimal(0)}
+
+
+@pytest.mark.parametrize(
+    "limit,code,status",
+    [("message", "not_attempted", "graded"), ("operator", "needs_review", "unavailable")],
+)
+def test_a_task_limit_mid_tool_loop_is_not_attempted(tmp_path, limit, code, status):
+    # Catches an agent that spends its own message budget on tool calls voiding the run.
+    question = exact_question("q", "Paris")
+    router = ScriptedRouter({question.prompt: reply("", finish_reason="tool_calls")})
+    log = rescored(
+        run(pack_task([question], name="pack"), router, tmp_path),
+        Score.unscored(reason="scoring_failed"),
+    )
+    reached = EvalSampleLimit(type=limit, limit=20)
+    log = log.model_copy(
+        update={"samples": [s.model_copy(update={"limit": reached}) for s in log.samples]}
+    )
+    [row] = measure_log(log, router.receipts.receipts())
+    assert (row.grade.code, row.grade.status, row.grade.score) == (code, status, 0.0)
 
 
 @pytest.mark.parametrize(

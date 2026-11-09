@@ -26,6 +26,8 @@ from .router_model import QUESTION_FAILURE_KEY, ROUTER_FAILURE_KEY
 
 # Limits that are Yugos deadlines rather than task rules; hitting one is a non-answer.
 _DEADLINE_LIMITS = frozenset({"time", "working", "cost"})
+# Task rules an agent can exhaust itself; stopped mid tool loop by one, it never answered.
+_TASK_LIMITS = frozenset({"message", "token", "turn"})
 # Text values Inspect's `value_to_float` converts; any other text is a malformed score.
 _SENTINELS = frozenset({CORRECT, INCORRECT, PARTIAL, NOANSWER})
 _BOOLEAN_TEXT = frozenset({"yes", "no", "true", "false"})
@@ -118,12 +120,13 @@ def _finite(text: str) -> bool:
 
 
 def _unscored_grade(
-    score: Score, grader: str, *, truncated: bool, router_failed: bool
+    score: Score, grader: str, *, truncated: bool, unfinished: bool, router_failed: bool
 ) -> GradingResult | None:
     """The Yugos grade for a sample the scorer left unscored, as legacy grading gates it.
 
-    A router non-answer decides first: truncation is a settled zero and a
-    router failure or deadline has no grade. Otherwise the grader could not
+    A router non-answer decides first: truncation is a settled zero, a task limit
+    reached mid tool loop is not attempted, and a router failure or deadline has
+    no grade. Otherwise the grader could not
     establish a grade (invalid reference, grader error, unusable judgment,
     unknown completion status), which needs review and leaves the category
     incomplete.
@@ -134,6 +137,10 @@ def _unscored_grade(
     if truncated:
         return GradingResult(
             score=0.0, grader=grader, code=GradeCode.TRUNCATED, status="skipped", details=details
+        )
+    if unfinished:
+        return GradingResult(
+            score=0.0, grader=grader, code=GradeCode.NOT_ATTEMPTED, details=details
         )
     if router_failed:
         return None
@@ -224,6 +231,9 @@ def measure_log(
                         score,
                         grader,
                         truncated=finish == "length",
+                        unfinished=finish == "tool_calls"
+                        and sample.limit is not None
+                        and sample.limit.type in _TASK_LIMITS,
                         router_failed=deadline,
                     )
                     value = 0.0
