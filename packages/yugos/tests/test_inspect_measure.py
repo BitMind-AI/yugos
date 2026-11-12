@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("inspect_ai")
 
-from inspect_ai.log import read_eval_log  # noqa: E402
+from inspect_ai.log import read_eval_log, write_eval_log  # noqa: E402
 from inspect_ai.scorer import Score  # noqa: E402
 from inspect_fakes import ScriptedRouter, exact_question, pack_task, reply, run  # noqa: E402
 
@@ -22,6 +22,7 @@ from yugos.inspect_engine import (  # noqa: E402
     FairnessProfile,
     ProviderReceipt,
     SampleMeasurement,
+    canonical_receipt,
     category_measurements_from_log,
     category_measurements_from_samples,
     competition_eval_options,
@@ -374,6 +375,30 @@ def test_receipt_digest_is_stable_across_reruns_and_replays(tmp_path):
     edited = log.model_copy(update={"invalidated": True})
     with pytest.raises(ValueError, match="edited"):
         receipt_digest(edited, receipts, dataset_revision="pack-v1")
+
+
+def test_receipt_digest_commits_unscored_samples_as_null(tmp_path):
+    # Catches Inspect's unscored NaN crashing the strict-JSON digest after a paid run.
+    question = exact_question("q", "Paris")
+    router = ScriptedRouter({question.prompt: "Paris"})
+    graded = run(pack_task([question], name="pack"), router, tmp_path)
+    receipts = router.receipts.receipts()
+    unscored = rescored(
+        graded,
+        Score.unscored(
+            reason="unknown_completion_status",
+            metadata={"code": "needs_review", "status": "unavailable"},
+        ),
+    )
+    location = str(tmp_path / "unscored.eval")
+    write_eval_log(unscored, location)
+    replay = read_eval_log(location)
+
+    digest = receipt_digest(unscored, receipts, dataset_revision="pack-v1")
+    assert digest == receipt_digest(replay, receipts, dataset_revision="pack-v1")
+    assert digest != receipt_digest(graded, receipts, dataset_revision="pack-v1")
+    [record] = canonical_receipt(replay, receipts, dataset_revision="pack-v1")["samples"]
+    assert record["scores"] == {"exact": {"value": None, "code": "needs_review"}}
 
 
 def test_every_submission_runs_with_identical_fairness_settings(tmp_path):

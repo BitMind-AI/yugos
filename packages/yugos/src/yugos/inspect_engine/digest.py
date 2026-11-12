@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Iterable
 from typing import Any
 
@@ -46,6 +47,17 @@ def _output_text(sample: EvalSample) -> str:
     )
 
 
+def _score_value(value: Any) -> Any:
+    """`value` with Inspect's unscored NaN as null, so the receipt is valid JSON."""
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _score_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_score_value(item) for item in value]
+    return value
+
+
 def _sample_record(sample: EvalSample) -> dict[str, Any]:
     return {
         "id": str(sample.id),
@@ -54,7 +66,7 @@ def _sample_record(sample: EvalSample) -> dict[str, Any]:
         "target_sha256": _sha256(_target_text(sample)),
         "output_sha256": _sha256(_output_text(sample)),
         "scores": {
-            name: {"value": score.value, "code": (score.metadata or {}).get("code")}
+            name: {"value": _score_value(score.value), "code": (score.metadata or {}).get("code")}
             for name, score in sorted((sample.scores or {}).items())
         },
         "error": sample.error is not None,
