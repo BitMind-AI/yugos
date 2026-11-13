@@ -10,10 +10,13 @@ import pytest
 
 from yugos.inference.actions import CallAction, ModelChoice
 from yugos.inference.calls import (
+    AccountedRequest,
     CallBudget,
     CallError,
     CallLimits,
+    CallRecord,
     MeteredCalls,
+    ModelRequest,
     ModelResponse,
     ProviderCallFailed,
     QuestionLimitExceeded,
@@ -371,6 +374,29 @@ def test_restored_history_counts_against_remaining_budget_and_question_calls():
     resumed.restore(tuple(first.calls))
     from yugos.inference.calls import QuestionLimitExceeded
 
+    with pytest.raises(QuestionLimitExceeded, match="call limit"):
+        resumed.execute(ACTION, "q1", deadline=time.monotonic() + 10)
+    with pytest.raises(CallError, match="budget cannot fund"):
+        resumed.execute(ACTION, "q2", deadline=time.monotonic() + 10)
+    assert len(resumed.calls) == 1 and resumed.cost_usd == 0.02
+
+
+def test_history_restores_from_calls_kept_without_their_conversation():
+    limits = CallLimits(max_cost_usd=0.03, max_question_cost_usd=0.03, max_calls_per_question=1)
+    client = SimpleNamespace(
+        quote=lambda r: 0.02,
+        complete=lambda r: ModelResponse(text="paid", cost_usd=0.02, latency_s=0),
+    )
+    first = MeteredCalls("r", client, limits, lambda _: None)
+    first.execute(ACTION, "q1", deadline=time.monotonic() + 10)
+    stored = first.calls[0].model_dump(mode="json")
+    assert isinstance(CallRecord.model_validate(stored).request, ModelRequest)
+    del stored["request"]["input"]
+    kept = CallRecord.model_validate(stored)
+    assert isinstance(kept.request, AccountedRequest)
+    assert CallRecord.model_validate(kept.model_dump(mode="json")) == kept
+    resumed = MeteredCalls("r", client, limits, lambda _: None)
+    resumed.restore((kept,))
     with pytest.raises(QuestionLimitExceeded, match="call limit"):
         resumed.execute(ACTION, "q1", deadline=time.monotonic() + 10)
     with pytest.raises(CallError, match="budget cannot fund"):
