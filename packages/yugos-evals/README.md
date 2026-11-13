@@ -131,6 +131,20 @@ generation field other than `temperature`, `seed`, `max_tokens`, or
 Sandboxed tasks use Inspect's local Docker provider and the pack's pinned
 images. Docker has to be installed.
 
+### Coding harnesses
+
+A frozen sandboxed question can be presented to a real coding harness in place
+of its task's own agent. `yugos_evals.harnessed.harness_question(question,
+harness=..., version=...)` returns a copy whose solver is Claude Code
+(`claude_code`), Codex CLI (`codex_cli`) or OpenCode (`opencode`) at one exact
+release; samples, sandbox and scorer are unchanged. The harness runs inside the
+task's sandbox and its model requests come back to the router, so the sandbox
+needs no network and every turn is routed and metered as usual. The copy is a
+separate source, `<source>@<harness>`, without difficulty labels.
+
+Install the `harness` extra to use it. The harness release is fetched once on
+the host and copied into the sandbox.
+
 **`compare RUN_A RUN_B`** requires both runs to cover the same questions and
 to be complete. It prints category net value and the overall lower bound, and
 reports when B beats A under the default policy (`--policy FILE` overrides

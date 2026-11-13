@@ -20,7 +20,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "matplotlib>=3.8", "shapely==2.1.2", "ruff>=0.12"]
+# Real coding harnesses as solvers for sandboxed tasks (`yugos_evals.harnessed`).
+# Inspect's agent bridge needs both SDKs to read the harnesses' provider requests.
+harness = ["inspect-swe==0.2.72", "openai>=3,<4", "anthropic>=1,<2"]
+dev = [
+    "yugos-evals[harness]",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "matplotlib>=3.8",
+    "shapely==2.1.2",
+    "ruff>=0.12",
+]
 
 [dependency-groups]
 dev = ["yugos-evals[dev]"]
@@ -35,6 +45,7 @@ yugos_evals = "yugos_evals._registry"
 # Installed native task construction from prepared data.
 [project.entry-points."yugos.inspect_tasks"]
 "yugos_evals.prepared" = "yugos_evals.prepared:build"
+"yugos_evals.harnessed" = "yugos_evals.harnessed:build"
 
 [tool.setuptools.packages.find]
 where = ["src"]
