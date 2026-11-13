@@ -37,6 +37,20 @@ class ModelRequest(BaseModel):
     timeout_s: float = Field(gt=0)
 
 
+class AccountedRequest(BaseModel):
+    """A dispatched request as accounting keeps it: everything but its conversation.
+
+    A host restoring durable history charges each call's spend and never sends
+    it again, so the record needs the call's identity and model, not its input.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+    call_id: str
+    model: ModelChoice
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    timeout_s: float = Field(gt=0)
+
+
 def committed_usd(calls) -> float:
     """Sum known bills. An open reservation stays in the reservation map."""
     return math.fsum(
@@ -89,7 +103,7 @@ class CallRecord(BaseModel):
     run_id: str
     question_id: str
     step: int
-    request: ModelRequest
+    request: ModelRequest | AccountedRequest
     response: ModelResponse
 
 
