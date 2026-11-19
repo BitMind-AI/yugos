@@ -47,8 +47,12 @@ async def portable_request(model, messages, tools, tool_choice, config):
     local = [tool for tool in tools if internal_tool_type(tool) is None]
     if len(local) == len(tools) and config.extra_body is None and config.extra_headers is None:
         return None
-    if isinstance(tool_choice, ToolFunction) and tool_choice.name not in {t.name for t in local}:
-        tool_choice = "auto" if local else "none"
+    named = isinstance(tool_choice, ToolFunction)
+    if not local and (named or tool_choice == "any"):
+        # The request required a tool and none is left: it is answered without one.
+        tool_choice = "none"
+    elif named and tool_choice.name not in {tool.name for tool in local}:
+        tool_choice = "auto"
     portable = config.model_copy(update={"extra_body": None, "extra_headers": None})
     return GenerateInput(messages, local, tool_choice, portable)
 
