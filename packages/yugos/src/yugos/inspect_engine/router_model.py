@@ -122,8 +122,8 @@ _STOP_REASONS: dict[str, StopReason] = {
 }
 
 
-def _calls(message: ChatMessageAssistant) -> list[tuple]:
-    return [(call.id, call.function, call.arguments) for call in message.tool_calls or ()]
+def _calls(message: ChatMessageAssistant) -> list[tuple[str, str]]:
+    return [(call.id, call.function) for call in message.tool_calls or ()]
 
 
 def restore_continuations(
@@ -133,8 +133,10 @@ def restore_continuations(
 
     A coding harness keeps its own transcript and rebuilds every request from it, so
     its assistant turns arrive without the metadata that carries the provider's
-    reasoning state, and an empty reply arrives as placeholder text. A turn whose tool
-    calls are exactly those of a reply this sample was given is that reply.
+    reasoning state, and an empty reply arrives as placeholder text. A harness also
+    rewrites its own record of a call, such as filling in an argument's default, so
+    arguments are not compared: a turn making the same calls, by ID and function, as a
+    reply this sample was given is that reply, and is sent as the model wrote it.
     """
     restored = []
     for message in input:
