@@ -150,4 +150,13 @@ def test_a_harness_request_keeps_only_tools_that_run_in_the_sandbox():
     forced = ToolFunction(name="web_search")
     _, tools, choice, _ = asyncio.run(portable_request(None, messages, [search], forced, plain))
     assert tools == [] and choice == "none"
+    # So is one that required some tool: the router protocol refuses a required
+    # choice with no tool to choose.
+    filtered = asyncio.run(portable_request(None, messages, [search], "any", plain))
+    assert ModelInput.from_inspect(*filtered).tool_choice == "none"
+    # A forced tool that is gone leaves the choice among the tools that remain.
+    _, tools, choice, _ = asyncio.run(
+        portable_request(None, messages, [shell, search], forced, plain)
+    )
+    assert tools == [shell] and choice == "auto"
     assert asyncio.run(portable_request(None, messages, [shell], "auto", plain)) is None
