@@ -13,6 +13,7 @@ from importlib.metadata import version as installed_version
 
 from inspect_ai import Task, task_with
 from inspect_ai.model import GenerateInput
+from inspect_ai.tool import ToolFunction, internal_tool_type
 
 from yugos.inspect_engine.frozen import _task_builder
 
@@ -32,15 +33,24 @@ def _check(harness: str, version: str) -> None:
 
 
 async def portable_request(model, messages, tools, tool_choice, config):
-    """Drop the provider-private headers and body fields a harness adds to its requests.
+    """Keep a harness's request to what any routed model can do inside the sandbox.
 
-    They carry session and cache hints for the harness's own provider; the routed
-    model may be any provider, and the router protocol refuses them.
+    Provider-private headers and body fields are dropped: they carry session and cache
+    hints for the harness's own provider, the routed model may be any provider, and
+    the router protocol refuses them.
+
+    Tools the provider runs itself, such as web search, are dropped too. They run on
+    the provider's side with the network access the sandbox denies, and only for the
+    providers that offer them. The harness's own tools are untouched: one that needs
+    the network is still offered and fails as it would on a machine without it.
     """
-    if config.extra_body is None and config.extra_headers is None:
+    local = [tool for tool in tools if internal_tool_type(tool) is None]
+    if len(local) == len(tools) and config.extra_body is None and config.extra_headers is None:
         return None
+    if isinstance(tool_choice, ToolFunction) and tool_choice.name not in {t.name for t in local}:
+        tool_choice = "auto" if local else "none"
     portable = config.model_copy(update={"extra_body": None, "extra_headers": None})
-    return GenerateInput(messages, tools, tool_choice, portable)
+    return GenerateInput(messages, local, tool_choice, portable)
 
 
 def harness_agent(harness: str, version: str):
