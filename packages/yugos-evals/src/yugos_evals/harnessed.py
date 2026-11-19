@@ -18,6 +18,9 @@ from yugos.inspect_engine.frozen import _task_builder
 
 BUILDER = "yugos_evals.harnessed"
 HARNESSES = ("claude_code", "codex_cli", "opencode")
+# OpenCode formats requests as one model from its release's own catalog, which drops
+# older models; the routed model still answers. This one is in current releases.
+OPTIONS = {"opencode": {"opencode_model": "anthropic/claude-sonnet-4-6"}}
 _RELEASE = re.compile(r"\d+(\.\d+)+")
 
 
@@ -45,7 +48,8 @@ def harness_agent(harness: str, version: str):
     _check(harness, version)
     import inspect_swe
 
-    return getattr(inspect_swe, harness)(version=version, filter=portable_request)
+    options = OPTIONS.get(harness, {})
+    return getattr(inspect_swe, harness)(version=version, filter=portable_request, **options)
 
 
 def build(*, options: dict, harness: str, version: str, builder: str, builder_args: dict) -> Task:
@@ -62,7 +66,9 @@ def harness_question(question, *, harness: str, version: str):
     """A frozen sandboxed question re-presented to a harness, without reloading it.
 
     The copy is a separate source (`<source>@<harness>`) with no difficulty labels:
-    panel evidence for the task's own agent does not describe a harness.
+    panel evidence for the task's own agent does not describe a harness. The task's
+    message limit is dropped too: it sizes the native agent's loop, and a harness
+    session is bounded by the run's call, cost and time limits instead.
     """
     _check(harness, version)
     config = question.inspect_task
@@ -93,6 +99,7 @@ def harness_question(question, *, harness: str, version: str):
                 "builder": BUILDER,
                 "builder_args": builder_args,
                 "packages": packages,
+                "message_limit": None,
             },
         }
     )

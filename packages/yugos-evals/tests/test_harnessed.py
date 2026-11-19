@@ -12,7 +12,7 @@ from yugos.evaluation import Question
 from yugos.inference.chat import ModelInput
 from yugos.inspect_engine import restore_tasks
 from yugos_evals.catalog import entry, freeze_entry, load_task
-from yugos_evals.harnessed import harness_question, portable_request
+from yugos_evals.harnessed import harness_agent, harness_question, portable_request
 
 
 @pytest.fixture
@@ -49,6 +49,31 @@ def test_harnessed_question_keeps_the_native_samples_sandbox_and_scorer(sandboxe
     # The harness and its release are part of the recipe, so they change the identity.
     other = harness_question(sandboxed, harness="claude_code", version="2.1.312")
     assert other.inspect_task != harnessed.inspect_task
+
+
+def test_harness_session_is_not_cut_at_the_native_agents_message_limit(sandboxed):
+    limited = sandboxed.model_copy(
+        update={"inspect_task": {**sandboxed.inspect_task, "message_limit": 30}}
+    )
+    [(native, _)] = restore_tasks([limited])
+    [(task, _)] = restore_tasks([harness_question(limited, harness="codex_cli", version="0.80.0")])
+    # Thirty messages end a harness after about a dozen turns, before it can finish.
+    assert (native.message_limit, task.message_limit) == (30, None)
+
+
+def test_opencode_is_given_a_model_its_release_can_resolve(monkeypatch):
+    import inspect_swe
+
+    seen = {}
+    monkeypatch.setattr(inspect_swe, "opencode", lambda **options: seen.update(options))
+    monkeypatch.setattr(inspect_swe, "claude_code", lambda **options: seen.update(options))
+    harness_agent("claude_code", "2.1.311")
+    assert "opencode_model" not in seen
+    harness_agent("opencode", "1.19.6")
+    # The inspect-swe default names a model newer OpenCode releases no longer list,
+    # which fails every session before its first request.
+    assert seen["opencode_model"] not in (None, "anthropic/claude-sonnet-4-5")
+    assert seen["version"] == "1.19.6" and seen["filter"] is portable_request
 
 
 def test_harnessed_question_drops_evidence_measured_with_the_native_agent(sandboxed):

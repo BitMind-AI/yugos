@@ -140,7 +140,9 @@ harness=..., version=...)` returns a copy whose solver is Claude Code
 release; samples, sandbox and scorer are unchanged. The harness runs inside the
 task's sandbox and its model requests come back to the router, so the sandbox
 needs no network and every turn is routed and metered as usual. The copy is a
-separate source, `<source>@<harness>`, without difficulty labels.
+separate source, `<source>@<harness>`, without difficulty labels. It drops the
+task's message limit, which sizes the native agent's loop; the run's call, cost
+and time limits bound a harness session.
 
 Install the `harness` extra to use it. The harness release is fetched once on
 the host and copied into the sandbox.
