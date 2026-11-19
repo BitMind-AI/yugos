@@ -6,7 +6,7 @@ from importlib.metadata import version
 
 import pytest
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.model import ChatMessageUser, GenerateConfig
+from inspect_ai.model import ChatMessageUser, ContentImage, ContentText, GenerateConfig
 from inspect_ai.tool import INTERNAL_TOOL_TYPE, ToolFunction, ToolInfo
 
 from yugos.evaluation import Question
@@ -160,3 +160,24 @@ def test_a_harness_request_keeps_only_tools_that_run_in_the_sandbox():
     )
     assert tools == [shell] and choice == "auto"
     assert asyncio.run(portable_request(None, messages, [shell], "auto", plain)) is None
+
+
+def test_a_harness_attachment_becomes_a_note_the_router_protocol_accepts():
+    # Claude Code answers a Read of an image file with the image itself.
+    read = ChatMessageUser(
+        content=[ContentText(text="plot.png:"), ContentImage(image="data:image/png;base64,AAAA")]
+    )
+    messages = [ChatMessageUser(content="fix the bug"), read]
+    plain = GenerateConfig(temperature=0)
+    with pytest.raises(ValueError, match="only text request content"):
+        ModelInput.from_inspect(messages, [], "auto", plain)
+
+    filtered = asyncio.run(portable_request(None, messages, [], "auto", plain))
+    request = ModelInput.from_inspect(*filtered)
+    assert request.messages[0].text == "fix the bug"
+    assert [part.text for part in request.messages[1].content] == [
+        "plot.png:",
+        "[image omitted: this session's model reads text only]",
+    ]
+    # The harness's own record of the conversation is not rewritten.
+    assert read.content[1].type == "image"
