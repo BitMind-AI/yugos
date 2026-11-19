@@ -154,14 +154,15 @@ def test_router_reply_becomes_output_with_tools_usage_and_operator_time(tmp_path
 
 def test_a_harness_replayed_turn_gets_its_reasoning_state_back(tmp_path):
     # A coding harness rebuilds each request from its own transcript: the assistant
-    # turn returns without metadata and an empty reply returns as placeholder text.
+    # turn returns without metadata, an empty reply returns as placeholder text, and
+    # a call's arguments can return rewritten, such as with a default filled in.
     state = ProviderState(
         provider_id="google",
         model_id="m",
         effort="medium",
         data={"api": "google", "message": {"role": "assistant", "content": ""}},
     )
-    requests = {"faithful": [], "edited": []}
+    requests = {"faithful": [], "rewritten": [], "other": []}
 
     async def client(call):
         requests[call.scope.sample_id].append(call.request)
@@ -181,8 +182,10 @@ def test_a_harness_replayed_turn_gets_its_reasoning_state_back(tmp_path):
             model = get_model()
             first = (await model.generate(sample.messages)).message
             calls = first.tool_calls
-            if sample.sample_id == "edited":
-                calls = [replace(calls[0], arguments={"city": "Rome"})]
+            if sample.sample_id == "rewritten":
+                calls = [replace(calls[0], arguments={"city": "Oslo", "units": "metric"})]
+            if sample.sample_id == "other":
+                calls = [replace(calls[0], function="forecast")]
             replayed = ChatMessageAssistant(content="(no content)", tool_calls=calls)
             result = ChatMessageTool(content="sunny", tool_call_id="t1")
             sample.output = await model.generate([*sample.messages, replayed, result])
@@ -190,19 +193,20 @@ def test_a_harness_replayed_turn_gets_its_reasoning_state_back(tmp_path):
 
         return solve
 
-    task = pack_task(
-        [exact_question("faithful", "sunny"), exact_question("edited", "sunny")], name="pack"
-    )
+    task = pack_task([exact_question(name, "sunny") for name in requests], name="pack")
     task.solver = replaying_harness()
     log = run_competition_eval(
         task, router_model(client, submission_id="sub"), log_dir=str(tmp_path), display="none"
     )
     assert not any(sample.error for sample in log.samples)
 
-    faithful, edited = (requests[name][1].messages[-2] for name in ("faithful", "edited"))
-    assert provider_state(faithful) == state and faithful.text == ""
-    # A turn the harness changed is no longer the reply the state belongs to.
-    assert provider_state(edited) is None and edited.text == "(no content)"
+    faithful, rewritten, other = (requests[name][1].messages[-2] for name in requests)
+    for restored in (faithful, rewritten):
+        # The turn is sent as the model wrote it, not as the harness recorded it.
+        assert provider_state(restored) == state and restored.text == ""
+        assert restored.tool_calls[0].arguments == {"city": "Oslo"}
+    # A turn calling another function is not the reply the state belongs to.
+    assert provider_state(other) is None and other.text == "(no content)"
     # The log records the request the router was sent.
     [sample] = [sample for sample in log.samples if sample.id == "faithful"]
     logged = [event for event in sample.events if event.event == "model"][1].input[-2]
