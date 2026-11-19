@@ -12,7 +12,7 @@ import re
 from importlib.metadata import version as installed_version
 
 from inspect_ai import Task, task_with
-from inspect_ai.model import GenerateInput
+from inspect_ai.model import ContentText, GenerateInput
 from inspect_ai.tool import ToolFunction, internal_tool_type
 
 from yugos.inspect_engine.frozen import _task_builder
@@ -32,6 +32,20 @@ def _check(harness: str, version: str) -> None:
         raise ValueError("a harness is pinned to one exact release")
 
 
+def _text_only(message):
+    """The message with each attachment replaced by a note that it was left out."""
+    content = message.content
+    if isinstance(content, str) or all(part.type in ("text", "reasoning") for part in content):
+        return message
+    parts = [
+        part
+        if part.type in ("text", "reasoning")
+        else ContentText(text=f"[{part.type} omitted: this session's model reads text only]")
+        for part in content
+    ]
+    return message.model_copy(update={"content": parts})
+
+
 async def portable_request(model, messages, tools, tool_choice, config):
     """Keep a harness's request to what any routed model can do inside the sandbox.
 
@@ -43,9 +57,19 @@ async def portable_request(model, messages, tools, tool_choice, config):
     the provider's side with the network access the sandbox denies, and only for the
     providers that offer them. The harness's own tools are untouched: one that needs
     the network is still offered and fails as it would on a machine without it.
+
+    An attachment, such as an image the harness read from disk, becomes a note saying
+    it was left out. The router protocol carries text only and refuses the request
+    otherwise, which ends the session with the harness reporting a failed model.
     """
     local = [tool for tool in tools if internal_tool_type(tool) is None]
-    if len(local) == len(tools) and config.extra_body is None and config.extra_headers is None:
+    text = [_text_only(message) for message in messages]
+    if (
+        len(local) == len(tools)
+        and all(new is old for new, old in zip(text, messages, strict=True))
+        and config.extra_body is None
+        and config.extra_headers is None
+    ):
         return None
     named = isinstance(tool_choice, ToolFunction)
     if not local and (named or tool_choice == "any"):
@@ -54,7 +78,7 @@ async def portable_request(model, messages, tools, tool_choice, config):
     elif named and tool_choice.name not in {tool.name for tool in local}:
         tool_choice = "auto"
     portable = config.model_copy(update={"extra_body": None, "extra_headers": None})
-    return GenerateInput(messages, local, tool_choice, portable)
+    return GenerateInput(text, local, tool_choice, portable)
 
 
 def harness_agent(harness: str, version: str):
