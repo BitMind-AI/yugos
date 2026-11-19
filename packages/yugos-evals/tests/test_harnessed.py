@@ -7,6 +7,7 @@ from importlib.metadata import version
 import pytest
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import ChatMessageUser, GenerateConfig
+from inspect_ai.tool import INTERNAL_TOOL_TYPE, ToolFunction, ToolInfo
 
 from yugos.evaluation import Question
 from yugos.inference.chat import ModelInput
@@ -128,3 +129,25 @@ def test_harness_requests_become_acceptable_to_the_router_protocol():
     assert request.config.extra_body is None and request.config.extra_headers is None
     plain = GenerateConfig(temperature=0)
     assert asyncio.run(portable_request(None, messages, [], "auto", plain)) is None
+
+
+def test_a_harness_request_keeps_only_tools_that_run_in_the_sandbox():
+    # Codex CLI declares web search as a tool its provider runs; Claude Code's own
+    # WebSearch tool asks for one in a request of its own. A provider that offers it
+    # would search the live web from a sandbox that has no network.
+    messages = [ChatMessageUser(content="fix the bug")]
+    shell = ToolInfo(name="exec_command", description="Run a command in the sandbox.")
+    search = ToolInfo(
+        name="web_search", description="Search the web.", options={INTERNAL_TOOL_TYPE: "web_search"}
+    )
+    plain = GenerateConfig(temperature=0)
+
+    _, tools, choice, _ = asyncio.run(
+        portable_request(None, messages, [shell, search], "auto", plain)
+    )
+    assert tools == [shell] and choice == "auto"
+    # A request that exists only to search is answered without a tool.
+    forced = ToolFunction(name="web_search")
+    _, tools, choice, _ = asyncio.run(portable_request(None, messages, [search], forced, plain))
+    assert tools == [] and choice == "none"
+    assert asyncio.run(portable_request(None, messages, [shell], "auto", plain)) is None
