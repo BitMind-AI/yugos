@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import time
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -121,6 +122,33 @@ _STOP_REASONS: dict[str, StopReason] = {
 }
 
 
+def _calls(message: ChatMessageAssistant) -> list[tuple]:
+    return [(call.id, call.function, call.arguments) for call in message.tool_calls or ()]
+
+
+def restore_continuations(
+    input: list[ChatMessage], replies: dict[tuple[str, ...], ChatMessageAssistant]
+) -> list[ChatMessage]:
+    """Give each replayed tool-calling turn back the reply it came from.
+
+    A coding harness keeps its own transcript and rebuilds every request from it, so
+    its assistant turns arrive without the metadata that carries the provider's
+    reasoning state, and an empty reply arrives as placeholder text. A turn whose tool
+    calls are exactly those of a reply this sample was given is that reply.
+    """
+    restored = []
+    for message in input:
+        if isinstance(message, ChatMessageAssistant) and not (message.metadata or {}).get(
+            PROVIDER_STATE_KEY
+        ):
+            calls = _calls(message)
+            reply = replies.get(tuple(call[0] for call in calls))
+            if reply is not None and _calls(reply) == calls:
+                message = reply
+        restored.append(message)
+    return restored
+
+
 def _output(reply: RouterReply, model: str, elapsed_s: float) -> ModelOutput:
     tool_calls = [
         ToolCall(id=call.id, function=call.function, arguments=call.arguments)
@@ -183,7 +211,33 @@ def record_model_time(seconds: float) -> None:
 
 
 class _RouterInspectModel(Model):
-    async def generate(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # Tool-calling replies that carry provider state, by sample and call IDs.
+        self._replies: dict[int, dict[tuple[str, ...], ChatMessageAssistant]] = {}
+
+    def _sample_replies(self) -> dict[tuple[str, ...], ChatMessageAssistant]:
+        sample = store()
+        replies = self._replies.get(id(sample))
+        if replies is None:
+            replies = self._replies[id(sample)] = {}
+            # A sample's replies are dropped with its store.
+            weakref.finalize(sample, self._replies.pop, id(sample), None)
+        return replies
+
+    async def generate(self, input, *args, **kwargs):
+        # Restored here, before Inspect records the request, so the log shows the
+        # conversation the router was sent.
+        replies = self._sample_replies()
+        if not isinstance(input, str):
+            input = restore_continuations(input, replies)
+        output = await self._timed_generate(input, *args, **kwargs)
+        message = output.message if output.choices else None
+        if message and message.tool_calls and (message.metadata or {}).get(PROVIDER_STATE_KEY):
+            replies[tuple(call.id for call in message.tool_calls)] = message
+        return output
+
+    async def _timed_generate(self, *args, **kwargs):
         # Inspect reconciles successful generations across every retry, while a
         # terminal exception skips that reconciliation. Own the final adjustment
         # around its complete generation so earlier callbacks cannot earn credit twice.
