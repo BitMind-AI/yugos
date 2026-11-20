@@ -1,6 +1,7 @@
 import asyncio
 import json
 import threading
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -11,7 +12,14 @@ pytest.importorskip("inspect_ai")
 from inspect_ai import Task  # noqa: E402
 from inspect_ai.dataset import MemoryDataset, Sample  # noqa: E402
 from inspect_ai.log import read_eval_log  # noqa: E402
-from inspect_ai.model import GenerateConfig, ModelOutput, RetryDecision  # noqa: E402
+from inspect_ai.model import (  # noqa: E402
+    ChatMessageAssistant,
+    ChatMessageTool,
+    GenerateConfig,
+    ModelOutput,
+    RetryDecision,
+    get_model,
+)
 from inspect_ai.scorer import includes  # noqa: E402
 from inspect_ai.solver import generate, solver, use_tools  # noqa: E402
 from inspect_ai.tool import tool  # noqa: E402
@@ -19,6 +27,7 @@ from inspect_ai.util import LimitExceededError  # noqa: E402
 from inspect_fakes import ScriptedRouter, exact_question, pack_task, reply, run  # noqa: E402
 
 from yugos.inference.calls import QuestionLimitExceeded  # noqa: E402
+from yugos.inference.chat import ProviderState, provider_state  # noqa: E402
 from yugos.inspect_engine import (  # noqa: E402
     QUESTION_EXHAUSTED,
     JsonlReceipts,
@@ -141,6 +150,67 @@ def test_router_reply_becomes_output_with_tools_usage_and_operator_time(tmp_path
     assert (sample.output.usage.input_tokens, sample.output.usage.output_tokens) == (11, 5)
     [event] = [e for e in sample.events if e.event == "model"]
     assert event.output.time is not None and event.output.time >= 0
+
+
+def test_a_harness_replayed_turn_gets_its_reasoning_state_back(tmp_path):
+    # A coding harness rebuilds each request from its own transcript: the assistant
+    # turn returns without metadata, an empty reply returns as placeholder text, and
+    # a call's arguments can return rewritten, such as with a default filled in.
+    state = ProviderState(
+        provider_id="google",
+        model_id="m",
+        effort="medium",
+        data={"api": "google", "message": {"role": "assistant", "content": ""}},
+    )
+    requests = {"faithful": [], "rewritten": [], "other": []}
+
+    async def client(call):
+        requests[call.scope.sample_id].append(call.request)
+        if len(requests[call.scope.sample_id]) == 1:
+            return RouterReply(
+                tool_calls=(
+                    RouterToolCall(id="t1", function="lookup", arguments={"city": "Oslo"}),
+                ),
+                provider_state=state,
+                finish_reason="tool_calls",
+            )
+        return reply("sunny")
+
+    @solver
+    def replaying_harness():
+        async def solve(sample, generate):
+            model = get_model()
+            first = (await model.generate(sample.messages)).message
+            calls = first.tool_calls
+            if sample.sample_id == "rewritten":
+                calls = [replace(calls[0], arguments={"city": "Oslo", "units": "metric"})]
+            if sample.sample_id == "other":
+                calls = [replace(calls[0], function="forecast")]
+            replayed = ChatMessageAssistant(content="(no content)", tool_calls=calls)
+            result = ChatMessageTool(content="sunny", tool_call_id="t1")
+            sample.output = await model.generate([*sample.messages, replayed, result])
+            return sample
+
+        return solve
+
+    task = pack_task([exact_question(name, "sunny") for name in requests], name="pack")
+    task.solver = replaying_harness()
+    log = run_competition_eval(
+        task, router_model(client, submission_id="sub"), log_dir=str(tmp_path), display="none"
+    )
+    assert not any(sample.error for sample in log.samples)
+
+    faithful, rewritten, other = (requests[name][1].messages[-2] for name in requests)
+    for restored in (faithful, rewritten):
+        # The turn is sent as the model wrote it, not as the harness recorded it.
+        assert provider_state(restored) == state and restored.text == ""
+        assert restored.tool_calls[0].arguments == {"city": "Oslo"}
+    # A turn calling another function is not the reply the state belongs to.
+    assert provider_state(other) is None and other.text == "(no content)"
+    # The log records the request the router was sent.
+    [sample] = [sample for sample in log.samples if sample.id == "faithful"]
+    logged = [event for event in sample.events if event.event == "model"][1].input[-2]
+    assert provider_state(logged) == state and logged.text == ""
 
 
 def test_only_infrastructure_unavailability_is_retried():

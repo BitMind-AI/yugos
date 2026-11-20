@@ -6,13 +6,14 @@ from importlib.metadata import version
 
 import pytest
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.model import ChatMessageUser, GenerateConfig
+from inspect_ai.model import ChatMessageUser, ContentImage, ContentText, GenerateConfig
+from inspect_ai.tool import INTERNAL_TOOL_TYPE, ToolFunction, ToolInfo
 
 from yugos.evaluation import Question
 from yugos.inference.chat import ModelInput
 from yugos.inspect_engine import restore_tasks
 from yugos_evals.catalog import entry, freeze_entry, load_task
-from yugos_evals.harnessed import harness_question, portable_request
+from yugos_evals.harnessed import harness_agent, harness_question, portable_request
 
 
 @pytest.fixture
@@ -49,6 +50,31 @@ def test_harnessed_question_keeps_the_native_samples_sandbox_and_scorer(sandboxe
     # The harness and its release are part of the recipe, so they change the identity.
     other = harness_question(sandboxed, harness="claude_code", version="2.1.312")
     assert other.inspect_task != harnessed.inspect_task
+
+
+def test_harness_session_is_not_cut_at_the_native_agents_message_limit(sandboxed):
+    limited = sandboxed.model_copy(
+        update={"inspect_task": {**sandboxed.inspect_task, "message_limit": 30}}
+    )
+    [(native, _)] = restore_tasks([limited])
+    [(task, _)] = restore_tasks([harness_question(limited, harness="codex_cli", version="0.80.0")])
+    # Thirty messages end a harness after about a dozen turns, before it can finish.
+    assert (native.message_limit, task.message_limit) == (30, None)
+
+
+def test_opencode_is_given_a_model_its_release_can_resolve(monkeypatch):
+    import inspect_swe
+
+    seen = {}
+    monkeypatch.setattr(inspect_swe, "opencode", lambda **options: seen.update(options))
+    monkeypatch.setattr(inspect_swe, "claude_code", lambda **options: seen.update(options))
+    harness_agent("claude_code", "2.1.311")
+    assert "opencode_model" not in seen
+    harness_agent("opencode", "1.19.6")
+    # The inspect-swe default names a model newer OpenCode releases no longer list,
+    # which fails every session before its first request.
+    assert seen["opencode_model"] not in (None, "anthropic/claude-sonnet-4-5")
+    assert seen["version"] == "1.19.6" and seen["filter"] is portable_request
 
 
 def test_harnessed_question_drops_evidence_measured_with_the_native_agent(sandboxed):
@@ -103,3 +129,55 @@ def test_harness_requests_become_acceptable_to_the_router_protocol():
     assert request.config.extra_body is None and request.config.extra_headers is None
     plain = GenerateConfig(temperature=0)
     assert asyncio.run(portable_request(None, messages, [], "auto", plain)) is None
+
+
+def test_a_harness_request_keeps_only_tools_that_run_in_the_sandbox():
+    # Codex CLI declares web search as a tool its provider runs; Claude Code's own
+    # WebSearch tool asks for one in a request of its own. A provider that offers it
+    # would search the live web from a sandbox that has no network.
+    messages = [ChatMessageUser(content="fix the bug")]
+    shell = ToolInfo(name="exec_command", description="Run a command in the sandbox.")
+    search = ToolInfo(
+        name="web_search", description="Search the web.", options={INTERNAL_TOOL_TYPE: "web_search"}
+    )
+    plain = GenerateConfig(temperature=0)
+
+    _, tools, choice, _ = asyncio.run(
+        portable_request(None, messages, [shell, search], "auto", plain)
+    )
+    assert tools == [shell] and choice == "auto"
+    # A request that exists only to search is answered without a tool.
+    forced = ToolFunction(name="web_search")
+    _, tools, choice, _ = asyncio.run(portable_request(None, messages, [search], forced, plain))
+    assert tools == [] and choice == "none"
+    # So is one that required some tool: the router protocol refuses a required
+    # choice with no tool to choose.
+    filtered = asyncio.run(portable_request(None, messages, [search], "any", plain))
+    assert ModelInput.from_inspect(*filtered).tool_choice == "none"
+    # A forced tool that is gone leaves the choice among the tools that remain.
+    _, tools, choice, _ = asyncio.run(
+        portable_request(None, messages, [shell, search], forced, plain)
+    )
+    assert tools == [shell] and choice == "auto"
+    assert asyncio.run(portable_request(None, messages, [shell], "auto", plain)) is None
+
+
+def test_a_harness_attachment_becomes_a_note_the_router_protocol_accepts():
+    # Claude Code answers a Read of an image file with the image itself.
+    read = ChatMessageUser(
+        content=[ContentText(text="plot.png:"), ContentImage(image="data:image/png;base64,AAAA")]
+    )
+    messages = [ChatMessageUser(content="fix the bug"), read]
+    plain = GenerateConfig(temperature=0)
+    with pytest.raises(ValueError, match="only text request content"):
+        ModelInput.from_inspect(messages, [], "auto", plain)
+
+    filtered = asyncio.run(portable_request(None, messages, [], "auto", plain))
+    request = ModelInput.from_inspect(*filtered)
+    assert request.messages[0].text == "fix the bug"
+    assert [part.text for part in request.messages[1].content] == [
+        "plot.png:",
+        "[image omitted: this session's model reads text only]",
+    ]
+    # The harness's own record of the conversation is not rewritten.
+    assert read.content[1].type == "image"
